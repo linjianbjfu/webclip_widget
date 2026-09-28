@@ -98,7 +98,12 @@ pi 的会话需要一份 operating brief——告诉模型怎么读 HTML、怎�
 
 ```ts
 interface BriefProvider {
-  /** 会话级系统提示词。provider 不支持 system role 时由调用方降级为首条 user 消息。 */
+  /**
+   * 会话级系统提示词。provider 不支持 system role 时由调用方降级为首条 user 消息。
+   *
+   * 对同一个 sessionId 必须逐字节稳定——上游的 prompt 缓存按前缀匹配，
+   * 任何时间戳、随机标识或依赖迭代顺序的拼装都会让每一轮都未命中。
+   */
   system(ctx: { sessionId: string; workspaceRoot: string; outDir: string }): string
   /** 从条目中剥除 brief，供历史投影使用。 */
   strip(text: string): string
@@ -192,11 +197,41 @@ LLM 流式返回
 - **完成单元**（`message_end` / `tool_execution_end` 等）：作为 pi 条目落盘，带 `seq`
 - **客户端重连**：按 `seq` 补齐已完成的条目，然后接上当前的实时增量
 
+**thinking 同理，且这一点关系到上游的 prompt 缓存。** `thinking_delta` 不落盘，但 thinking **内容**落盘——它是 pi 消息 content 里的一个 part：
+
+```ts
+interface ThinkingContent {
+  type: "thinking"
+  thinking: string
+  thinkingSignature?: string   // 供多轮延续时回传给 API
+  redacted?: boolean
+}
+```
+
+恢复会话走的是 `buildSessionContext(原始条目)`，不经过任何投影，因此 thinking 与其签名原样回到上下文，发给上游的请求与当初一致，缓存前缀不因恢复而断裂。客户端历史里看不到 thinking，那是投影所为（`contentText` 只取 `type === "text"`），只影响客户端呈现，不影响喂给模型的那一路。
+
 这意味着**续传粒度是条目而非 token**：断线期间半截的消息，客户端要等它完成才看得到。对一个本来就会离线几分钟的移动端，这是正确的取舍——它需要的是结果，不是错过的字。代价是省掉了数量级更高的写入。
 
 **被中断的半截消息不落盘，靠重发补回。** DO 若在消息流到一半时被驱逐，`message_end` 未触发、条目未写入，已经推给用户的那部分正文丢失；看门狗恢复时重发该次 LLM 调用，消息重新生成。
 
 这是有意为之：一条截断的 assistant 消息不应进入对话历史，否则后续推理会建立在模型没说完的句子上。持久化半截消息只是把一个 UX 瑕疵换成上下文污染。
+
+### prompt 缓存的前缀稳定性
+
+上游的 prompt 缓存按**前缀逐字节相同**命中。恢复会话本身不破坏它（见上），但有四件事会：
+
+| 威胁 | 后果 |
+|---|---|
+| operating brief 不稳定 | 每一轮都未命中 |
+| 工具定义变更 | 一次部署作废全部在跑会话的缓存 |
+| 切换 provider 或模型 | 必然失效 |
+| 缓存 TTL 过期 | 隔时较久恢复的会话无论如何都是冷的 |
+
+**第一条是唯一完全由本设计控制、且最容易无意引入的。** 它不报错、不产生错误结果，只表现为账单变贵与首 token 变慢，因此可能很久无人察觉。
+
+因此给 `BriefProvider.system()` 加一条契约：**对同一个 `sessionId`，它必须逐字节稳定**。具体禁止的是时间戳、随机标识、以及任何依赖迭代顺序的拼装（例如遍历 `Map` 或 `Set` 生成工具清单）。若 brief 需要随会话变化的信息，该信息必须来自入参且本身稳定。
+
+后三条不由本设计承担，但需要在切换 provider 或改动工具定义时**预期到一次缓存冷启**，不要把随之而来的延迟上升误判为性能回归。
 
 ### turn 的持久性
 
@@ -732,6 +767,8 @@ session 作用域唯一的实质优势是消除竞态，而那个问题由"`POST
 - **U** 历史投影从 pi 条目中剥除 operating brief：构造一条含 brief 的首条用户消息，投影结果不含 brief 的任何片段
 - **U** 投影只透出 user / assistant / tool_call / tool_result 四类，内部条目类型（`model_change`、`thinking_level_change`）不出现在客户端历史中
 - **I** 恢复的会话保留原本的模型与思考等级，不回退到默认值（验证落盘游标初值规则：新会话落盘引导条目，恢复的会话跳过）
+- **U** `BriefProvider.system()` 对同一入参连续调用一千次返回完全相同的字节
+- **I** 恢复会话后发往上游的请求前缀与中断前一致：含 thinking part 的 assistant 消息连同 `thinkingSignature` 原样出现，不因投影而丢失
 - **I** 同一会话连续两次恢复后，`kind='pi_entry'` 的记录数不增长（引导条目未被重复追加）
 - **I** `GET /sessions` 推导出的繁忙状态与 `turns` 表一致；不存在独立的 `sessions.status` 列可供漂移
 - **I** `POST /sessions` → `GET /sessions` → `DELETE /sessions/{id}` 后该会话不再出现，其条目与工作区一并清除
