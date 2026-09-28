@@ -216,6 +216,28 @@ interface ThinkingContent {
 
 这是有意为之：一条截断的 assistant 消息不应进入对话历史，否则后续推理会建立在模型没说完的句子上。持久化半截消息只是把一个 UX 瑕疵换成上下文污染。
 
+### 打开旧会话时上下文怎么重建
+
+只读 `events` 一张表，且只取 `kind='pi_entry'` 的行。`turns` 不参与——它只管幂等、保活与中断检测。
+
+```
+SELECT payload FROM events WHERE session_id = ? AND kind = 'pi_entry' ORDER BY seq
+        ↓  JSON.parse → SessionEntry[]
+        ↓  线性重链 parentId
+        ↓  buildSessionContext(entries, leafId)
+SessionContext { messages, thinkingLevel, model, activeToolNames }
+        ↓  createAgentSession(…) 用这些条目播种 SessionManager
+        ↓  追加本次 prompt → 发往上游
+```
+
+三点需要注意：
+
+**重链是必须的。** pi 的会话是树（`parentId` / `leafId`，支持 fork），而本设计持久化的是线性序列。恢复时须把 `parentId` 按 `seq` 顺序重新串成一条链。v1 没有分支功能，线性重链因此是精确的；**若将来支持 fork，这一步要改**。
+
+**模型与思考等级也来自条目。** `model_change` 与 `thinking_level_change` 是两种 `SessionEntry`，同属 `kind='pi_entry'`。这正是[落盘游标初值](#pi-接入)那条规则的意义所在。
+
+**压缩过的会话不会被"解压"。** 把全部条目传给 `buildSessionContext` 是安全的：`defaultContextEntryTransform` 会定位最后一条 `compaction` 条目，只保留它及其之后（或 `firstKeptEntryId` 之后）的部分。**前提是压缩条目本身已落盘**——落盘触发的事件集合必须包含 `compaction_end`，否则恢复会把压缩前的条目全部放回，等于每次打开旧会话都撤销一次压缩，上下文与费用同时膨胀。
+
 ### prompt 缓存的前缀稳定性
 
 上游的 prompt 缓存按**前缀逐字节相同**命中。恢复会话本身不破坏它（见上），但有四件事会：
@@ -776,6 +798,8 @@ session 作用域唯一的实质优势是消除竞态，而那个问题由"`POST
 - **U** `BriefProvider.system()` 对同一入参连续调用一千次返回完全相同的字节
 - **I** 恢复会话后发往上游的请求前缀与中断前一致：含 thinking part 的 assistant 消息连同 `thinkingSignature` 原样出现，不因投影而丢失
 - **I** 同一会话连续两次恢复后，`kind='pi_entry'` 的记录数不增长（引导条目未被重复追加）
+- **I** 发生过压缩的会话重新打开后，发往上游的 `messages` 从压缩条目起始，不含压缩前的条目——验证压缩不因恢复而失效
+- **I** 重建上下文只读取 `kind='pi_entry'`：`out_file` / `turn_end` / `error` 记录不出现在 `messages` 中
 - **I** `GET /sessions` 推导出的繁忙状态与 `turns` 表一致；不存在独立的 `sessions.status` 列可供漂移
 - **I** `POST /sessions` → `GET /sessions` → `DELETE /sessions/{id}` 后该会话不再出现，其条目与工作区一并清除
 
