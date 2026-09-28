@@ -13,6 +13,15 @@
 scripts/           Agent Note 门禁脚本（Node 原生跑 .ts，无第三方依赖）
 ```
 
+## 参考实现：edge-mac-widget
+
+前一代产品，同样把 [pi coding agent](https://github.com/earendil-works/pi) 作为 SDK 跑在 Cloudflare Workers + Durable Objects 上，把网页转成 widget。与本项目的关键差异是它的工具在**客户端本机**执行，而本项目的客户端是 iOS app、不保证在线，因此工具下沉到服务端。
+
+- 本地：`/Users/jian/project/edge-mac-widget`
+- 仓库：https://github.com/linjianbjfu/edge-mac-widget.git
+
+它的 `README.md` 记录了 pi 在 Workers 上踩过的坑（TypeBox JIT、`import.meta.url`、`entry_appended` 不是持久化钩子、`/tmp` 按请求隔离、`process.env` 泄漏密钥、grep 无法远程化），这些结论**在本项目同样成立**，不要重新推导。需要时直接参考；但注意凡是涉及"工具在客户端执行"的设计，在本项目都不适用。
+
 ## Skills
 
 `.agents/skills/<name>/SKILL.md` 是唯一的源。三个工具各自原生发现它：
