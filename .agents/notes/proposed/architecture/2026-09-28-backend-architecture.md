@@ -227,6 +227,12 @@ interface ThinkingContent {
 | 切换 provider 或模型 | 必然失效 |
 | 缓存 TTL 过期 | 隔时较久恢复的会话无论如何都是冷的 |
 
+pi 一侧已核实是干净的（`0.82.1`）：
+
+- 系统提示词只注入 `${cwd}`，**不注入日期或时间**；固定用 `/workspace` 即稳定
+- 条目的 `timestamp` / `id` / `parentId` 不上线——`buildSessionContext` 只返回 `messages`
+- thinking **会**回传：`openai-completions` 适配器把 `thinkingSignature` 当作**字段名**使用（DeepSeek 下即 `reasoning_content`），把落盘的 thinking 写进该字段；另有 `compat.requiresThinkingAsText` 分支将其转为纯文本前置到 assistant content。两条分支都依赖落盘的 thinking，不存则都走不通
+
 **第一条是唯一完全由本设计控制、且最容易无意引入的。** 它不报错、不产生错误结果，只表现为账单变贵与首 token 变慢，因此可能很久无人察觉。
 
 因此给 `BriefProvider.system()` 加一条契约：**对同一个 `sessionId`，它必须逐字节稳定**。具体禁止的是时间戳、随机标识、以及任何依赖迭代顺序的拼装（例如遍历 `Map` 或 `Set` 生成工具清单）。若 brief 需要随会话变化的信息，该信息必须来自入参且本身稳定。
