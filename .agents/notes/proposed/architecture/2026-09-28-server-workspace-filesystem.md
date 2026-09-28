@@ -22,8 +22,8 @@ webclip_widget 的服务端要把 pi coding agent 跑在 Cloudflare Workers 上�
 
 | | 内容 | 量级 |
 |---|---|---|
-| 输入 | 一个网页的 source | 单文件，**可能超过 1 MB** |
-| 输出 | `extra.js` + `widget.html` | 各几十 KB |
+| 输入 | 一个网页的 source 与截图 | source 单文件、**可能超过 1 MB**；随首轮 prompt 以 multipart 上传 |
+| 输出 | `out/extra.js` + `out/widget.html` | 各几十 KB，写在约定的 `/out` 目录下 |
 | 中间产物 | 选区 manifest 等 | 小 |
 | 验证产物 | 渲染截图 | 每次迭代一张，几百 KB |
 
@@ -52,6 +52,8 @@ DO SQLite 的 2 MB 是**单行**上限，不是单 Durable Object 上限（后�
 CREATE TABLE files  (id INTEGER PRIMARY KEY, path TEXT UNIQUE, size INTEGER, mode INTEGER, mtime INTEGER);
 CREATE TABLE chunks (file_id INTEGER, idx INTEGER, data BLOB, PRIMARY KEY (file_id, idx));
 ```
+
+**工作区按会话隔离。** 一个 Durable Object 装的是同一用户的**全部会话**，而每个会话是一个独立的剪藏任务，都会写 `source.html`、`out/widget.html` 这些同名文件。若 `path` 在 DO 内全局唯一，两个并存的会话会互相覆盖——这不是边角情况，同一用户同时处理两个网页是常规操作。因此 `IFileSystem` 的每个实例绑定一个 `session_id`，所有查询都带上它。
 
 **分块对 `IFileSystem` 接口以上完全不可见，这是一条不变量而不是优化。** `readFileBuffer()` 做的第一件事就是把所有 chunk 按 `idx` 拼回完整字节再返回：
 
@@ -288,6 +290,9 @@ R2 原本在本提案里有两个职责，现在都没了：
 - **U** 写入 5 MB 文件后 `readFileBuffer` 返回的字节与写入完全相同（逐字节比对，非长度比对）
 - **U** 内容含多字节 UTF-8 字符且**恰好跨越分块边界**时，重组解码无乱码——按字节切分而非按字符
 - **U** `getAllPaths()` 同步返回，不返回 Promise；结果包含全部已写入路径且不含已删除路径
+- **I** 两个会话各自写入同名的 `source.html`：内容互不可见、互不覆盖；删除其中一个会话不影响另一个
+- **I** 对 `/out` 下任意路径的写入都产生 `out_file` 事件——`write` 工具、`edit` 工具、以及 shell 重定向（`… > out/extra.js`）三条路径均覆盖
+- **I** 上传的 gzip 文件部分被解压后落盘：工作区中的 `source.html` 字节与客户端压缩前完全一致
 - **U** `IFileSystem` 的 21 个方法全部实现；`stat` / `lstat` / `readdir` / `rm` / `mv` / `cp` 对不存在的路径抛出而非静默成功
 - **I** 单次 `SELECT … ORDER BY idx` 返回 5 MB 的全部分块；分块数与文件大小一致
 - **I** 同一文件连续读取十次只触发一次分块重组（缓存命中）；写入后下一次读取重新重组

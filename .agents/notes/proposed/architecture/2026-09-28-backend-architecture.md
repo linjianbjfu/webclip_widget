@@ -68,6 +68,23 @@ UserAgentDO（idFromName(userId)）
 | 模型接入 | `ModelRuntime.create({ credentials: InMemoryCredentialStore, modelsPath: null })`，只注册当前选中的 provider | 全内存，密钥留在 Workers Secret；未使用的 provider 无需配置 key |
 | 工具环境 | 只转发 `PI_*` 前缀的变量 | `nodejs_compat` 把 secrets 一并填进 `process.env`，pi 的 bash 工具用 `getShellEnv()` 构造子进程环境——原样转发等于把网关 key 交出去 |
 
+#### 系统提示词留作独立工作
+
+pi 的会话需要一份 operating brief——告诉模型怎么读 HTML、怎么定位选区、怎么写 XPath 兜底、怎么避免编造数据。edge-mac-widget 的对应文件有 818 行，其质量直接决定产品好坏：本篇与文件系统篇记录的"渲染成功不等于数字正确"那类风险，防线全在这里。
+
+**本版本不设计提示词内容，只固定它的接口**：
+
+```ts
+interface BriefProvider {
+  /** 会话级系统提示词。provider 不支持 system role 时由调用方降级为首条 user 消息。 */
+  system(ctx: { sessionId: string; workspaceRoot: string; outDir: string }): string
+  /** 从条目中剥除 brief，供历史投影使用。 */
+  strip(text: string): string
+}
+```
+
+`system()` 与 `strip()` 必须成对：投影依赖 `strip` 把 brief 从首条用户消息里摘干净，否则恢复的客户端会看到服务端提示词。实现阶段可从 edge-mac-widget 的版本裁剪起步，但那份文本是为"工具在客户端执行"写的，涉及本机路径与 shell 能力的段落不适用。
+
 与 edge-mac-widget 的**唯一结构性差异**：那边通过 WebSocket RPC 把 `*Operations` 指向客户端，这边指向同进程的 DO SQLite 文件系统。pi 的这层 seam 不变，换的只是另一端。
 
 ### 存储布局
@@ -110,8 +127,16 @@ CREATE TABLE turns (
 );
 CREATE INDEX turns_by_status ON turns (session_id, status);
 
--- 工作区。见文件系统篇。
-CREATE TABLE files  (id INTEGER PRIMARY KEY, path TEXT UNIQUE, size INTEGER, mode INTEGER, mtime INTEGER);
+-- 工作区。每个会话一份，互不可见。见文件系统篇。
+CREATE TABLE files (
+  id         INTEGER PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  path       TEXT NOT NULL,
+  size       INTEGER NOT NULL,
+  mode       INTEGER NOT NULL,
+  mtime      INTEGER NOT NULL,
+  UNIQUE (session_id, path)     -- 不是 path 全局唯一：一个 DO 装同一用户的多个会话
+);
 CREATE TABLE chunks (file_id INTEGER, idx INTEGER, data BLOB, PRIMARY KEY (file_id, idx));
 ```
 
@@ -184,14 +209,18 @@ turn 结束后不再续排 alarm，DO 随即进入正常驱逐路径，空闲不
 见下面的协议一节。结论是 **SSE + 普通 HTTP**，且**流是 turn 作用域的**：只在一轮 turn 进行期间保持连接，空闲时不挂着。
 
 ```
-POST   /v1/sessions                      创建
+POST   /v1/sessions                      创建空会话，初始化工作区 → { sessionId }
 GET    /v1/sessions                      列表
+DELETE /v1/sessions/{id}                 删除会话，连同其工作区与条目
 GET    /v1/sessions/{id}/history?since=  历史（条目投影）
-POST   /v1/sessions/{id}/prompt          启动 turn → 200 text/event-stream，流从第一个 token 开始
+POST   /v1/sessions/{id}/prompt          启动 turn → 200 text/event-stream；首轮在此上传 source 与截图
 GET    /v1/sessions/{id}/events?since=   断线重连；turn 已结束时补发后立即关闭
 POST   /v1/sessions/{id}/abort
-DELETE /v1/sessions/{id}
+GET    /v1/sessions/{id}/out             列出产物及其 sha256
+GET    /v1/sessions/{id}/out/{path}      取产物内容
 ```
+
+**本版本不做鉴权。** `userId` 暂由请求头直接给出，Worker 不校验。这是一个明确的临时状态，不是疏漏——见[风险](#风险)。
 
 **`POST /prompt` 直接返回 SSE 流，而不是返回 `202` 再让客户端另开一条 GET。** 后者存在一个真实的竞态：两步之间产生的 token 增量会丢失——因为增量不落盘（见上一节），客户端会看到一条消息的开头不是流进来的，而是等整条完成后突然出现。发起与接收合并为同一个请求，这个窗口从根上不存在。
 
@@ -199,7 +228,24 @@ DELETE /v1/sessions/{id}
 
 `GET /events` 只用于**断线重连**。SSE 每条事件带 `id: <seq>`，重连时客户端带上 `Last-Event-ID`（或等价的 `since=`），服务端据此补发已完成的条目——这正是 edge-mac-widget 手工实现的 `sinceSeq` 游标，只不过由协议本身定义了语义。
 
+#### `POST /sessions`：建会话并初始化工作区
+
+```http
+POST /v1/sessions
+Content-Type: application/json
+
+{ "title": "某某股票页面" }        // 可选
+```
+
+返回 `201` 与 `{ "sessionId": "…" }`。服务端在此创建会话行并初始化该会话的空工作区（建立 `/out` 目录约定），**不接收任何网页内容**——source 与截图随首轮 prompt 上传。
+
+这样切分的理由：会话创建是轻量的、可重试的；而上传是重活。把两者合并会让创建端点也要处理 multipart、gzip 与幂等，而失败重试的语义完全不同（建会话重试会产生多余的空会话，上传重试必须幂等）。
+
+一个会话对应一个剪藏任务。**若用户要换一个网页，新建会话**，而不是在原会话里替换 source——工作区里已有的中间产物与 `/out` 对新网页没有意义，复用只会让上下文混淆。
+
 #### `POST /prompt` 的请求与响应
+
+纯文本的后续轮次用 JSON：
 
 ```http
 POST /v1/sessions/{sessionId}/prompt
@@ -207,11 +253,40 @@ Content-Type: application/json
 
 {
   "turnId": "9f2c7b1e-4a83-4d15-9c60-7e3b2a5f8d01",
-  "text":   "把这个页面做成 widget",
-  "images": [ { "mediaType": "image/png", "base64": "…" } ],
+  "text":   "把折线图改成柱状图",
   "since":  41
 }
 ```
+
+**首轮携带网页内容时用 `multipart/form-data`**，`request.formData()` 在 Workers 原生可用：
+
+```http
+POST /v1/sessions/{sessionId}/prompt
+Content-Type: multipart/form-data; boundary=…
+
+--…
+Content-Disposition: form-data; name="turnId"
+9f2c7b1e-4a83-4d15-9c60-7e3b2a5f8d01
+--…
+Content-Disposition: form-data; name="text"
+把这个页面做成 widget
+--…
+Content-Disposition: form-data; name="file"; filename="source.html"
+Content-Type: text/html
+Content-Encoding: gzip          ← 可选，服务端按此解压
+<gzip 字节>
+--…
+Content-Disposition: form-data; name="file"; filename="screenshot.png"
+Content-Type: image/png
+<png 字节>
+--…
+```
+
+每个 `file` 部分被写入该会话工作区的根目录（`source.html`、`screenshot.png`）。**截图同时作为图片输入进入模型上下文**，不只是工作区里的一个文件。
+
+**用 gzip，不用 zip。** `DecompressionStream("gzip")` 在 Workers 原生可用（已实测：30 KB 的重复 HTML 压到 87 字节，往返无损），而 zip 是容器格式，需要自行解析中央目录、引入依赖。多个文件由 multipart 承载，不需要再套一层归档。
+
+体积不成问题：Workers 的入站请求体上限为 100 MB（Free/Pro），而输入是 5 MB 量级的 HTML 加一张截图。
 
 | 字段 | 必填 | 说明 |
 |---|---|---|
@@ -219,6 +294,9 @@ Content-Type: application/json
 | `text` | 二选一 | 提示文本；与 `images` 至少有其一非空 |
 | `images` | 二选一 | 图片输入，沿用 edge-mac-widget 的 `PromptImage` 与其尺寸/数量上限 |
 | `since` | 否 | 仅在重试时有意义：服务端从该 `seq` 之后开始补发，而不是从头。省略则视为 `0` |
+| `file` | 否 | 仅 multipart 形态。可重复，每个写入工作区根目录。`Content-Encoding: gzip` 时服务端解压后再落盘 |
+
+**重试同一个 `turnId` 时不必重传文件。** 服务端命中已有 turn 即接流，不再读取 multipart 的文件部分——这正是幂等在此处的实际价值：5 MB 的上传不会因为一次超时而重来。
 
 模型与思考等级不在此处设置——它们属于会话，由 `POST /v1/sessions` 创建时确定，并随会话持久化。
 
@@ -231,6 +309,41 @@ Content-Type: application/json
 | `409` | 该会话已有**另一个** `turnId` 处于 `running`（响应体给出该 `turnId`） |
 
 `409` 意味着 **v1 不支持在一轮进行中插入新提示**。edge-mac-widget 的协议里有 `streamingBehavior: "steer" | "followUp"`，本版本不实现：steer 会把新提示注入正在运行的那一轮，使得"一个 `turnId` 对应一轮"不再成立，条目的 `turn_id` 分组语义随之模糊。客户端在本地排队、待 `stream_end` 后再提交即可——对一个本就可能离线的移动端，本地排队是自然的做法。**若将来需要 steer，`turnId` 的语义要从"标识一轮"改为"标识一次提交"，届时条目分组需要另设字段。**
+
+#### 产物：`/out` 目录与它的两条回传通道
+
+agent 把最终产物写进工作区的 `/out` 目录（`out/widget.html`、`out/extra.js`）。客户端通过两条互补的通道获得它们。
+
+**通道一：`out_file` 事件，只带元数据。**
+
+```
+id: 58
+event: out_file
+data: {"path":"out/extra.js","bytes":2431,"sha256":"a3f…"}
+```
+
+该事件**由文件系统层发出，不由工具层发出**。这一点是刻意的：agent 未必用 `write` 工具写文件，它完全可能用 shell 重定向（`sed … > out/extra.js`）或 `edit` 工具。挂在工具层会漏掉前者，而 `edit` 的参数是 `old_string` / `new_string`，客户端**无法据此重建文件内容**。挂在文件系统层则覆盖全部写入路径，且不依赖任何工具的参数格式。
+
+事件不携带内容，因为 agent 会反复改：一轮里 `out/extra.js` 可能被写五次（预览、发现报错、修、再预览），内容跟着每次写入走就是把同一个文件发五遍，而只有最后一遍有用；断线重连补发时还要再发五遍。
+
+**通道二：`turn_end` 携带最终清单，小文件内联。**
+
+```
+event: turn_end
+data: {
+  "turnId": "9f2c…", "reason": "completed",
+  "out": [
+    {"path":"out/widget.html","bytes":8120,"sha256":"…","content":"<!doctype html>…"},
+    {"path":"out/extra.js",  "bytes":2431,"sha256":"…","content":"document.get…"}
+  ]
+}
+```
+
+超过内联阈值（**256 KB**）的条目只给元数据。本项目的产物是几十 KB 量级，因此实际上始终走内联，**客户端无需任何额外往返即可拿到最终产物**。
+
+**`GET /v1/sessions/{id}/out` 与 `/out/{path}` 仍然必须存在。** 流只在 turn 期间存在，而客户端可能换设备、清缓存，或在三天后回来查看某个会话的产物。工作区是持久的，这两个端点是产物的权威来源；事件与内联只是省掉往返的优化。
+
+**`/out` 是强制约定而非建议。** `preview_widget` 渲染的是 `out/widget.html`；产物的判定以该目录下的实际文件为准，不以 agent 在回答里的声明为准。
 
 #### 幂等：turnId 由客户端生成
 
@@ -297,6 +410,51 @@ app 启动
 若让客户端按 `turnId` 重连，它必须先判断自己属于哪一轮、那一轮结束没有、之后又跑了几轮；按 `seq` 则只需记住一个数字。离线时间越长，前者越容易出错。
 
 **分组信息随数据下发，不进 URL。** 一次跨多轮的补发会把若干轮的条目混在一起，客户端仍需知道哪些属于同一轮——这由 `entries.turn_id` 提供，随每条事件下发。寻址用 `session + seq`，分组用载荷里的 `turn_id`。
+
+#### 事件清单
+
+流中只出现下列事件类型。带 `id:` 的推进 `Last-Event-ID`，不带的不推进（见下）。
+
+| `event:` | 带 `id:` | 载荷 | 用途 |
+|---|---|---|---|
+| `stream` | 否 | `{events:[…]}` | 合帧后的 token 与思考增量（`text_delta` / `thinking_delta`），渲染用 |
+| `entry` | 是 | pi 条目的投影 | 完成的消息、工具调用、工具结果 |
+| `tool_start` | 否 | `{toolCallId,name,args}` | agent 开始执行某工具——**客户端据此知道它在干什么** |
+| `tool_update` | 否 | `{toolCallId,text}` | 工具的流式输出（如 bash 的 stdout） |
+| `tool_end` | 否 | `{toolCallId,name,isError,output}` | 工具结束；完整结果另以 `entry` 落盘 |
+| `out_file` | 是 | `{path,bytes,sha256}` | `/out` 下的文件被写入 |
+| `compaction` | 否 | `{phase:"start"\|"end"}` | 上下文压缩，可能持续数秒，用于向用户解释停顿 |
+| `turn_end` | 是 | `{turnId,reason,out:[…]}` | 一轮结束，携带最终产物清单 |
+| `error` | 是 | 见下 | 本轮失败 |
+| `stream_end` | 否 | `{sessionBusy}` | 连接终止符 |
+
+`tool_*` 三类不带 `id:`，因为它们是同一份事实的瞬时视图——权威记录是随后落盘的 `entry`。客户端用 `tool_*` 做实时呈现，断线重连后从 `entry` 得到同样的信息，不会因为漏了 `tool_start` 而丢失状态。
+
+#### 错误事件
+
+```
+id: 61
+event: error
+data: {
+  "turnId": "9f2c…",
+  "code":   "llm_failed",
+  "message":"上游返回 429，已重试 3 次",
+  "retryable": true
+}
+```
+
+`code` 取自封闭集合，客户端据此决定行为，不解析 `message`：
+
+| `code` | 含义 | 客户端应当 |
+|---|---|---|
+| `llm_failed` | 上游调用失败 | 提示并允许重试（新 `turnId`） |
+| `turn_timeout` | 超过最长时限被强制结束 | 同上 |
+| `recovery_exhausted` | 恢复次数超上限 | 同上 |
+| `internal` | 未分类的服务端错误 | 提示，不自动重试 |
+
+`error` 之后必定紧跟 `stream_end`。错误**不使用 HTTP 状态码**，因为响应头在第一个 token 之前就已发出——状态码那时还不知道。仅请求本身不合法的情况用状态码（见上表）。
+
+工具执行失败**不产生 `error` 事件**：它作为 `isError` 的工具结果回给模型，由模型决定怎么办，整轮继续。
 
 #### 流的终止：`stream_end` 与 `turn_end` 是两回事
 
@@ -510,6 +668,22 @@ session 作用域唯一的实质优势是消除竞态，而那个问题由"`POST
 - **I** `GET /history` 的返回完全来自已落盘条目：关闭实时流后立即调用，助手消息正文与流式过程中累加所得一致
 - **I** `abort` 在 turn 中途生效：该 `turns` 行置为 `aborted` 且不被删除，保活 alarm 停止续排，中断检测不再重启该轮
 
+### 上传与产物
+
+- **I** 首轮以 multipart 上传 `source.html` 与 `screenshot.png`：两者落入该会话工作区根目录，截图同时作为图片输入进入模型上下文
+- **I** 带 `Content-Encoding: gzip` 的文件部分被解压后落盘，字节与压缩前一致
+- **I** 用同一 `turnId` 重试携带文件的 prompt：服务端不重复读取文件部分，工作区内容不变，且不产生第二轮
+- **I** `turn_end` 的 `out` 清单包含 `/out` 下全部文件及其 sha256；小于 256 KB 的内联 `content`，超过的只给元数据
+- **I** `GET /out` 与 `GET /out/{path}` 在 turn 结束后仍可取回产物，内容与 `turn_end` 内联的一致
+- **I** agent 在一轮内多次写同一个 `/out` 文件：产生多个 `out_file` 事件，但 `turn_end` 的清单只含最终版本
+- **U** 事件清单中只出现规定的十种 `event:` 类型；`entry` / `out_file` / `turn_end` / `error` 带 `id:`，其余不带
+
+### 错误
+
+- **I** LLM 调用失败产生 `error` 事件（`code: "llm_failed"`）后紧跟 `stream_end`，而非用 HTTP 状态码
+- **I** 工具执行失败**不**产生 `error` 事件：作为 `isError` 的工具结果回给模型，整轮继续
+- **I** `error` 的 `code` 取自封闭集合；客户端仅据 `code` 决策，`message` 仅供展示
+
 ### 安全与并发
 
 - **I** 工具调用时 `LLM_API_KEY` 不出现在传给 bash 的环境中；只有 `PI_*` 前缀的变量被转发
@@ -538,4 +712,8 @@ session 作用域唯一的实质优势是消除竞态，而那个问题由"`POST
 
 **`turnId` 的幂等窗口需要定期清理。** 已结束的 `turnId` 必须保留一段时间才能正确回答重试，但不能无限保留，否则 `turns` 表会单调增长。需要一个保留期（例如 24 小时）与清理路径；清理过早会让一次迟到的重试误开新轮。
 
-**未定项。** 鉴权方案（edge-mac-widget 的 `user-id.ts` 是原型桩，真实 iOS 客户端需要可验证的身份）；多会话并发上限的具体取值；以及 `MAX_CONCURRENT_TURNS` 是否应把 CPU 密集工具计入同一预算（文件系统篇已提出，此处需要给出数值）。
+**本版本没有鉴权，`userId` 由请求头直接给出且不校验。** 后果是具体的：任何人构造一个请求头即可读取、修改或删除他人的会话与工作区，并以他人身份消耗 LLM 额度。`idFromName(userId)` 是路由的根，因此这不是"少了一层防护"，而是**整个隔离边界建立在一个客户端自称的字符串上**。
+
+这是一个有意接受的临时状态，前提是部署不对外公开。**在任何真实用户接触之前必须补上**：鉴权方案本身是一篇独立的提案，需要决定身份来源、令牌形态与轮换方式。
+
+**未定项。** 多会话并发上限的具体取值；以及 `MAX_CONCURRENT_TURNS` 是否应把 CPU 密集工具计入同一预算（文件系统篇已提出，此处需要给出数值）。
