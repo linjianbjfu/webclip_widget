@@ -102,16 +102,18 @@ CREATE TABLE sessions (
 --   SELECT 1 FROM turns WHERE session_id = ? AND status = 'running'
 -- 冗余存一份必然与 turns 漂移，而漂移的症状是会话卡在 running 再也发不了 prompt。
 
--- pi 的原始 SessionEntry，逐字保存。恢复会话时唯一的事实来源。
-CREATE TABLE entries (
+-- 协议事件日志。唯一的有序日志，`seq` 是 SSE `id:` 与续传游标的来源。
+-- pi 条目是其中一种记录，不是全部：out_file / turn_end / error 由本服务产生，
+-- pi 并不知道它们，但它们同样需要 seq 才能参与续传。
+CREATE TABLE events (
   session_id TEXT NOT NULL,
-  seq        INTEGER NOT NULL,   -- 会话级单调递增，由服务端分配，跨 turn 连续
-  turn_id    TEXT NOT NULL,      -- 产生该条目的 turn，供客户端分组
-  entry_id   TEXT NOT NULL,
-  type       TEXT NOT NULL,
-  entry      TEXT NOT NULL,
+  seq        INTEGER NOT NULL,   -- 会话级单调递增，服务端分配，跨 turn 连续
+  turn_id    TEXT NOT NULL,      -- 产生该记录的 turn，供客户端分组
+  kind       TEXT NOT NULL,      -- 'pi_entry' | 'out_file' | 'turn_end' | 'error'
+  payload    TEXT NOT NULL,      -- kind='pi_entry' 时是 pi 的原始 SessionEntry，逐字保存
   PRIMARY KEY (session_id, seq)
 );
+CREATE INDEX events_pi ON events (session_id, kind, seq);
 
 -- 每一轮 turn，进行中与已结束的都保留。
 -- 已结束的行不能立刻删除：幂等窗口内仍需据其回答迟到的重试。
@@ -140,7 +142,11 @@ CREATE TABLE files (
 CREATE TABLE chunks (file_id INTEGER, idx INTEGER, data BLOB, PRIMARY KEY (file_id, idx));
 ```
 
-**只有一份日志，就是 `entries`。** 客户端看到的历史是它的投影，不是第二份存储。
+**只有一份有序日志，就是 `events`。** 客户端看到的历史是它的投影，不是第二份存储。
+
+恢复 pi 会话时只读 `kind = 'pi_entry'` 的记录（`events_pi` 索引为此存在），其余记录不参与上下文重建——它们是协议层的事实，不是对话的一部分。反过来，续传读全部记录，因为客户端需要它们。
+
+这与[下面否决的](#曾考虑的替代方案)"单独建表持久化 token 增量"不冲突：那条否决的是**增量**（一轮几千条），这里是每轮几条协议事件，量级相差三个数量级。
 
 这与 edge-mac-widget 的做法一致：`HistoryMessage` 是 `StoredEntry` 的投影，投影时剥掉藏在首条用户消息里的 operating brief，使恢复的客户端永远看不到服务端的系统提示词。
 
@@ -341,7 +347,15 @@ data: {
 
 超过内联阈值（**256 KB**）的条目只给元数据。本项目的产物是几十 KB 量级，因此实际上始终走内联，**客户端无需任何额外往返即可拿到最终产物**。
 
-**`GET /v1/sessions/{id}/out` 与 `/out/{path}` 仍然必须存在。** 流只在 turn 期间存在，而客户端可能换设备、清缓存，或在三天后回来查看某个会话的产物。工作区是持久的，这两个端点是产物的权威来源；事件与内联只是省掉往返的优化。
+**但落盘的 `turn_end` 不含 `content`，只保留 `path` / `bytes` / `sha256`。** 内联只发生在实时流上。
+
+理由是 agent 会迭代：一个会话跑五轮就有五条 `turn_end`。若内容随之落盘，`GET /history` 会把历史上每一个版本的 widget 全量重发，而同一份内容在工作区（`files` / `chunks`）里已经存了一份——等于把存储和传输都翻几倍，换来的只是省掉一次 GET。
+
+于是形成这个取舍：**在线时内联（零往返），回放时给清单、内容走 GET**。断线重连、换设备、或事后查看历史时多一次请求，代价是历史不膨胀。
+
+**`GET /v1/sessions/{id}/out` 与 `/out/{path}` 不可被 `GET /history` 替代。** 历史是事件日志的投影，而日志里的 `turn_end` 按上面的规则不含内容——因此从历史里只能拿到清单与哈希，拿不到文件本身。这两个端点是产物的**唯一权威来源**；事件与内联只是在线时省掉往返的优化。
+
+客户端可据 `sha256` 判断本地缓存是否最新，仅在不一致时才取，不必盲目重下。
 
 **`/out` 是强制约定而非建议。** `preview_widget` 渲染的是 `out/widget.html`；产物的判定以该目录下的实际文件为准，不以 agent 在回答里的声明为准。
 
@@ -409,7 +423,66 @@ app 启动
 
 若让客户端按 `turnId` 重连，它必须先判断自己属于哪一轮、那一轮结束没有、之后又跑了几轮；按 `seq` 则只需记住一个数字。离线时间越长，前者越容易出错。
 
-**分组信息随数据下发，不进 URL。** 一次跨多轮的补发会把若干轮的条目混在一起，客户端仍需知道哪些属于同一轮——这由 `entries.turn_id` 提供，随每条事件下发。寻址用 `session + seq`，分组用载荷里的 `turn_id`。
+**分组信息随数据下发，不进 URL。** 一次跨多轮的补发会把若干轮的条目混在一起，客户端仍需知道哪些属于同一轮——这由 `events.turn_id` 提供，随每条事件下发。寻址用 `session + seq`，分组用载荷里的 `turn_id`。
+
+#### 一轮完整的线缆示例
+
+首轮携带网页内容，到产物回到客户端为止：
+
+```http
+POST /v1/sessions/abc/prompt
+Content-Type: multipart/form-data; boundary=…
+  turnId=9f2c7b1e-…   text=把这个页面做成 widget
+  file=source.html (Content-Encoding: gzip)   file=screenshot.png
+
+HTTP/1.1 200 OK
+Content-Type: text/event-stream
+```
+
+```
+event: stream
+data: {"events":[{"k":"text_delta","text":"我先读一下页面"}]}
+
+event: tool_start
+data: {"toolCallId":"t1","name":"read","args":{"path":"/source.html"}}
+
+event: tool_end
+data: {"toolCallId":"t1","name":"read","isError":false,"output":"…"}
+
+id: 55
+event: entry
+data: {"kind":"tool_result","toolCallId":"t1",…}
+
+event: tool_start
+data: {"toolCallId":"t2","name":"write","args":{"path":"/out/extra.js","content":"…"}}
+
+id: 57
+event: out_file
+data: {"path":"out/extra.js","bytes":2431,"sha256":"a3f…"}
+
+id: 58
+event: out_file
+data: {"path":"out/widget.html","bytes":8120,"sha256":"b71…"}
+
+id: 59
+event: turn_end
+data: {
+  "turnId":"9f2c7b1e-…","reason":"completed",
+  "out":[
+    {"path":"out/widget.html","bytes":8120,"sha256":"b71…","content":"<!doctype html>…"},
+    {"path":"out/extra.js",  "bytes":2431,"sha256":"a3f…","content":"document.getEl…"}
+  ]
+}
+
+event: stream_end
+data: {"sessionBusy":false}
+```
+
+客户端读到 `turn_end` 即把 `out[].content` 写入本地缓存，整轮结束，**没有第二个请求**。
+
+注意 `id: 59` 这条落盘时会去掉 `content`（见上一节），因此后来通过 `GET /history` 或 `GET /events?since=` 回放时，同一条 `turn_end` 只有清单没有内容——那时取内容走 `GET /out/{path}`。
+
+过程中的两条 `out_file` 让客户端在 turn 结束前就能显示"已生成 extra.js"。它们不带内容，因为 agent 常常反复改同一个文件（写 → 预览 → 发现报错 → 改 → 再预览），内容跟着每次写入走就是把同一个文件发很多遍。`turn_end` 的清单**只含最终版本**。
 
 #### 事件清单
 
@@ -512,7 +585,7 @@ async handlePrompt(sessionId: string, turnId: string, text: string, since: numbe
       .catch(err => this.hub.fail(sessionId, err))
       .finally(() => this.hub.endTurn(sessionId, turnId))
   } else {
-    await sub.backfill(this.store.entriesSince(sessionId, since))   // 同 turnId 重试，从客户端游标补
+    await sub.backfill(this.store.eventsSince(sessionId, since))   // 同 turnId 重试，从客户端游标补
   }
 
   return new Response(readable, { headers: { "content-type": "text/event-stream" } })
@@ -623,13 +696,13 @@ session 作用域唯一的实质优势是消除竞态，而那个问题由"`POST
 - **U** 历史投影从 pi 条目中剥除 operating brief：构造一条含 brief 的首条用户消息，投影结果不含 brief 的任何片段
 - **U** 投影只透出 user / assistant / tool_call / tool_result 四类，内部条目类型（`model_change`、`thinking_level_change`）不出现在客户端历史中
 - **I** 恢复的会话保留原本的模型与思考等级，不回退到默认值（验证落盘游标初值规则：新会话落盘引导条目，恢复的会话跳过）
-- **I** 同一会话连续两次恢复后，条目总数不增长（引导条目未被重复追加）
+- **I** 同一会话连续两次恢复后，`kind='pi_entry'` 的记录数不增长（引导条目未被重复追加）
 - **I** `GET /sessions` 推导出的繁忙状态与 `turns` 表一致；不存在独立的 `sessions.status` 列可供漂移
 - **I** `POST /sessions` → `GET /sessions` → `DELETE /sessions/{id}` 后该会话不再出现，其条目与工作区一并清除
 
 ### turn 生命周期与持久性
 
-- **I** 一批条目的落盘是单个事务：在写入中途注入异常后，该批条目要么全部可见要么全部不可见
+- **I** 一批记录的落盘是单个事务：在写入中途注入异常后，该批记录要么全部可见要么全部不可见
 - **I** turn 开始时排出保活 alarm；用 `runDurableObjectAlarm` 触发后，若仍有 `running` 的 turn 则再次排出下一个
 - **I** turn 结束后该行置为 `completed` / `aborted` / `failed` 并填 `ended_at`，**行不被删除**，且不再续排 alarm
 - **I** 将 `last_progress_at` 强制改旧后触发 alarm：**从已落盘条目继续该轮**而非标记失败，最终产物与未中断时一致
@@ -664,7 +737,7 @@ session 作用域唯一的实质优势是消除竞态，而那个问题由"`POST
 - **E** CLI 在指定事件序号处断开并带 `Last-Event-ID` 重连，导出的事件序列与不断开时逐条相同——无缺口、无重复、无乱序
 - **E** 客户端发出 prompt 后**立即杀掉进程**，turn 在服务端跑完；重开后历史完整，会话不再繁忙
 - **I** 断线期间完成的消息在重连后可见；断线期间半截的消息在其完成后作为完整条目出现
-- **I** 消息流到一半中断时 `entries` 中不出现截断的 assistant 消息；恢复后该消息以完整形态出现且仅出现一次
+- **I** 消息流到一半中断时 `events` 中不出现截断的 assistant 消息；恢复后该消息以完整形态出现且仅出现一次
 - **I** `GET /history` 的返回完全来自已落盘条目：关闭实时流后立即调用，助手消息正文与流式过程中累加所得一致
 - **I** `abort` 在 turn 中途生效：该 `turns` 行置为 `aborted` 且不被删除，保活 alarm 停止续排，中断检测不再重启该轮
 
@@ -677,6 +750,9 @@ session 作用域唯一的实质优势是消除竞态，而那个问题由"`POST
 - **I** `GET /out` 与 `GET /out/{path}` 在 turn 结束后仍可取回产物，内容与 `turn_end` 内联的一致
 - **I** agent 在一轮内多次写同一个 `/out` 文件：产生多个 `out_file` 事件，但 `turn_end` 的清单只含最终版本
 - **U** 事件清单中只出现规定的十种 `event:` 类型；`entry` / `out_file` / `turn_end` / `error` 带 `id:`，其余不带
+- **I** 落盘的 `turn_end` 记录不含 `content`：turn 结束后 `GET /history` 与 `GET /events?since=` 返回的 `turn_end` 只有 `path` / `bytes` / `sha256`
+- **I** 恢复 pi 会话只读取 `kind='pi_entry'` 的记录；`out_file` / `turn_end` / `error` 不进入模型上下文
+- **I** `GET /history` 无法提供产物内容——该用例确认这是刻意的分工，产物必须经由 `GET /out/{path}` 获取
 
 ### 错误
 
