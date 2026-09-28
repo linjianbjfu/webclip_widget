@@ -347,15 +347,31 @@ data: {
 
 超过内联阈值（**256 KB**）的条目只给元数据。本项目的产物是几十 KB 量级，因此实际上始终走内联，**客户端无需任何额外往返即可拿到最终产物**。
 
-**但落盘的 `turn_end` 不含 `content`，只保留 `path` / `bytes` / `sha256`。** 内联只发生在实时流上。
+**落盘的 `turn_end` 同样带 `content`**（受同一阈值约束），但**投影时只为每个路径的最新一份发送内容**。
 
-理由是 agent 会迭代：一个会话跑五轮就有五条 `turn_end`。若内容随之落盘，`GET /history` 会把历史上每一个版本的 widget 全量重发，而同一份内容在工作区（`files` / `chunks`）里已经存了一份——等于把存储和传输都翻几倍，换来的只是省掉一次 GET。
+这是为了同时满足两件事。一件是常见路径：用户换了新设备，拉到会话列表，点开一条会话——他既要看聊天历史，也要立刻看到 widget。若历史不带内容，这一步就要多出"列产物 + 逐个取内容"三次请求。另一件是防膨胀：同一个 `out/extra.js` 在三轮迭代里被改了三次，历史里就有三条 `turn_end`，而只有最后一份有用。
 
-于是形成这个取舍：**在线时内联（零往返），回放时给清单、内容走 GET**。断线重连、换设备、或事后查看历史时多一次请求，代价是历史不膨胀。
+投影规则因此是按路径取最新：
 
-**`GET /v1/sessions/{id}/out` 与 `/out/{path}` 不可被 `GET /history` 替代。** 历史是事件日志的投影，而日志里的 `turn_end` 按上面的规则不含内容——因此从历史里只能拿到清单与哈希，拿不到文件本身。这两个端点是产物的**唯一权威来源**；事件与内联只是在线时省掉往返的优化。
+```
+会话跑了三轮，out/extra.js 被改了三次
 
-客户端可据 `sha256` 判断本地缓存是否最新，仅在不一致时才取，不必盲目重下。
+GET /history 返回：
+  turn_end #1   out:[{path:"out/extra.js", bytes, sha256}]            ← 元数据
+  turn_end #2   out:[{path:"out/extra.js", bytes, sha256}]            ← 元数据
+  turn_end #3   out:[{path:"out/extra.js", bytes, sha256, content}]   ← 带内容
+```
+
+新设备一次 `GET /history` 即可同时得到对话历史与**当前**产物，既不多发请求，也不下载已被取代的版本。
+
+**阈值仍然必要。** widget 不保证小：若 `widget.html` 把图片内联为 data URI，单份可达数百 KB，二十轮迭代就是数 MB，那时每次拉历史都重发它才是真问题。超过 **256 KB** 的条目，落盘与投影都只给元数据。
+
+**`GET /v1/sessions/{id}/out` 与 `/out/{path}` 覆盖 history 不承担的两种情况：**
+
+- 产物超过 256 KB 阈值，历史里只有元数据
+- 客户端只想重取产物而不想拉整个会话历史（例如本地缓存丢失但历史仍在）
+
+常规路径——在线时看 `turn_end`、新设备时看 `GET /history`——都不需要它们。客户端可据 `sha256` 判断本地缓存是否最新，仅在不一致时才取。
 
 **`/out` 是强制约定而非建议。** `preview_widget` 渲染的是 `out/widget.html`；产物的判定以该目录下的实际文件为准，不以 agent 在回答里的声明为准。
 
@@ -480,7 +496,7 @@ data: {"sessionBusy":false}
 
 客户端读到 `turn_end` 即把 `out[].content` 写入本地缓存，整轮结束，**没有第二个请求**。
 
-注意 `id: 59` 这条落盘时会去掉 `content`（见上一节），因此后来通过 `GET /history` 或 `GET /events?since=` 回放时，同一条 `turn_end` 只有清单没有内容——那时取内容走 `GET /out/{path}`。
+`id: 59` 这条会连同 `content` 一起落盘。后续 `GET /history` 回放时，同一路径只有**最新**的那条 `turn_end` 携带内容，更早的被投影为元数据（见上一节）——因此新设备一次拉历史即可得到当前产物。
 
 过程中的两条 `out_file` 让客户端在 turn 结束前就能显示"已生成 extra.js"。它们不带内容，因为 agent 常常反复改同一个文件（写 → 预览 → 发现报错 → 改 → 再预览），内容跟着每次写入走就是把同一个文件发很多遍。`turn_end` 的清单**只含最终版本**。
 
@@ -750,9 +766,11 @@ session 作用域唯一的实质优势是消除竞态，而那个问题由"`POST
 - **I** `GET /out` 与 `GET /out/{path}` 在 turn 结束后仍可取回产物，内容与 `turn_end` 内联的一致
 - **I** agent 在一轮内多次写同一个 `/out` 文件：产生多个 `out_file` 事件，但 `turn_end` 的清单只含最终版本
 - **U** 事件清单中只出现规定的十种 `event:` 类型；`entry` / `out_file` / `turn_end` / `error` 带 `id:`，其余不带
-- **I** 落盘的 `turn_end` 记录不含 `content`：turn 结束后 `GET /history` 与 `GET /events?since=` 返回的 `turn_end` 只有 `path` / `bytes` / `sha256`
+- **I** 同一路径被三轮各写一次后，`GET /history` 中只有最后一条 `turn_end` 携带 `content`，前两条仅有元数据
+- **I** 新设备仅调用 `GET /sessions` 与 `GET /history` 即可得到对话历史与当前产物内容，无需额外请求
+- **I** 产物超过 256 KB 时，落盘与投影均只保留元数据，内容仅可经 `GET /out/{path}` 取得
 - **I** 恢复 pi 会话只读取 `kind='pi_entry'` 的记录；`out_file` / `turn_end` / `error` 不进入模型上下文
-- **I** `GET /history` 无法提供产物内容——该用例确认这是刻意的分工，产物必须经由 `GET /out/{path}` 获取
+- **I** `GET /out` 与 `GET /out/{path}` 在历史已提供内容的情况下仍可用，且返回与历史中一致的字节
 
 ### 错误
 
