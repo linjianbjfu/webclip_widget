@@ -49,7 +49,15 @@ webclip_widget 的服务端要把 pi coding agent 跑在 Cloudflare Workers 上�
 DO SQLite 的 2 MB 是**单行**上限，不是单 Durable Object 上限（后者是 10 GB）。所以大文件按字节切成多行：
 
 ```sql
-CREATE TABLE files  (id INTEGER PRIMARY KEY, path TEXT UNIQUE, size INTEGER, mode INTEGER, mtime INTEGER);
+CREATE TABLE files (
+  id         INTEGER PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  path       TEXT NOT NULL,
+  size       INTEGER NOT NULL,
+  mode       INTEGER NOT NULL,
+  mtime      INTEGER NOT NULL,
+  UNIQUE (session_id, path)     -- 不是 path 全局唯一
+);
 CREATE TABLE chunks (file_id INTEGER, idx INTEGER, data BLOB, PRIMARY KEY (file_id, idx));
 ```
 
