@@ -186,10 +186,10 @@ CREATE TABLE chunks (file_id INTEGER, idx INTEGER, data BLOB, PRIMARY KEY (file_
 ```
 LLM 流式返回
    ├─→ text_delta ×N   推给当前连着的客户端，渲染用
-   └─→ message_end     pi 写入完整 SessionEntry → 落盘 → GET /history 读它
+   └─→ message_end     pi 写入完整 SessionEntry → 落盘 → 历史读取时从这里取
 ```
 
-因此 `GET /history` 不需要也不应该累加增量。edge-mac-widget 的 `toHistoryMessages` 正是这样做的：输入是 `StoredEntry[]`，直接从 `entry.message.content` 抽取完整正文，不经过任何增量累加。自行 merge 会把 pi 已经给出的内容重拼一遍，且拼出的版本可能与 pi 的不一致——thinking 块与工具调用的结构化参数并不出现在 `text_delta` 里。
+因此读取历史时不需要也不应该累加增量。edge-mac-widget 的 `toHistoryMessages` 正是这样做的：输入是 `StoredEntry[]`，直接从 `entry.message.content` 抽取完整正文，不经过任何增量累加。自行 merge 会把 pi 已经给出的内容重拼一遍，且拼出的版本可能与 pi 的不一致——thinking 块与工具调用的结构化参数并不出现在 `text_delta` 里。
 
 因此：
 
@@ -303,9 +303,8 @@ turn 结束后不再续排 alarm，DO 随即进入正常驱逐路径，空闲不
 POST   /v1/sessions                      创建空会话，初始化工作区 → { sessionId }
 GET    /v1/sessions                      列表
 DELETE /v1/sessions/{id}                 删除会话，连同其工作区与条目
-GET    /v1/sessions/{id}/history?since=  历史（条目投影）
 POST   /v1/sessions/{id}/prompt          启动 turn → 200 text/event-stream；首轮在此上传 source 与截图
-GET    /v1/sessions/{id}/events?since=   断线重连；turn 已结束时补发后立即关闭
+GET    /v1/sessions/{id}/events?since=&follow=   读取历史与/或接入实时流
 POST   /v1/sessions/{id}/abort
 ```
 
@@ -315,7 +314,22 @@ POST   /v1/sessions/{id}/abort
 
 浏览器的 `EventSource` 只支持 GET，但本项目的客户端是 iOS：`URLSession.bytes(for:)` 对 POST 同样适用，且 SSE 解析本来就要自己写，不依赖 `EventSource`。
 
-`GET /events` 只用于**断线重连**。SSE 每条事件带 `id: <seq>`，重连时客户端带上 `Last-Event-ID`（或等价的 `since=`），服务端据此补发已完成的条目——这正是 edge-mac-widget 手工实现的 `sinceSeq` 游标，只不过由协议本身定义了语义。
+#### `GET /events` 的两种用法由 `follow` 区分
+
+```
+GET /events?since=0&follow=false     读全部历史，补发完即 stream_end 关闭，不订阅
+GET /events?since=41&follow=true     断线重连：补齐后接入实时流
+```
+
+`follow` **默认 `false`**。这不是随意的默认值：`follow=true` 在有 turn 运行时会成为订阅者，而订阅者是一个在途入站请求，会把 DO 钉在内存里计费。"打开会话看一眼历史"不应当付这个代价，因此想接实时流的一方必须显式要求。
+
+`follow=false` 的响应总是有限的：补发 `since` 之后的全部记录，随即 `stream_end` 并关闭，无论此刻是否有 turn 在跑。
+
+**没有单独的 `GET /history`。** 它曾经存在，返回条目投影的 JSON 数组，但它是 `GET /events?since=0&follow=false` 的真子集，只是换了一种编码。客户端无论如何都要实现 SSE 解析（`POST /prompt` 的响应就是 SSE），因此"JSON 更易解析"不构成保留它的理由。
+
+投影规则对两种用法一致，包括把工作区中各 `/out` 路径的**当前**内容附到最后一条 `turn_end` 上——新设备因此一次请求即可得到对话历史与可渲染的 widget。
+
+`GET /events` 用于**断线重连**时，SSE 每条事件带 `id: <seq>`，重连时客户端带上 `Last-Event-ID`（或等价的 `since=`），服务端据此补发已完成的条目——这正是 edge-mac-widget 手工实现的 `sinceSeq` 游标，只不过由协议本身定义了语义。
 
 #### `POST /sessions`：建会话并初始化工作区
 
@@ -382,7 +396,7 @@ Content-Type: image/png
 | `turnId` | 是 | 客户端生成的 **UUIDv4**，小写带连字符的标准形式。服务端在 session 内查找；客户端须保证「同一次提交重试给出同一个 id」在本地状态丢失后仍成立——见下 |
 | `text` | 二选一 | 提示文本；与 `images` 至少有其一非空 |
 | `images` | 二选一 | 图片输入，沿用 edge-mac-widget 的 `PromptImage` 与其尺寸/数量上限 |
-| `since` | 否 | 仅在重试时有意义：服务端从该 `seq` 之后开始补发，而不是从头。省略则视为 `0` |
+| `since` | 否 | 客户端游标：服务端先补发该 `seq` 之后已有的记录，再接本轮的实时事件。省略视为 `0`，即补发整个会话 |
 | `file` | 否 | 仅 multipart 形态。可重复，每个写入工作区根目录。`Content-Encoding: gzip` 时服务端解压后再落盘 |
 
 **重试同一个 `turnId` 时不必重传文件。** 服务端命中已有 turn 即接流，不再读取 multipart 的文件部分——这正是幂等在此处的实际价值：5 MB 的上传不会因为一次超时而重来。
@@ -398,6 +412,17 @@ Content-Type: image/png
 | `409` | 该会话已有**另一个** `turnId` 处于 `running`（响应体给出该 `turnId`） |
 
 **`409` 不影响任何正在进行的东西**：被拒的只是这一个请求，turn 继续运行，已有的订阅者继续收事件。客户端据响应体里的 `runningTurnId` 选择等待（读到 `stream_end` 后再提交）或中断（先 `POST /abort`）。
+
+客户端会同时持有两条流的情形只有一种，下表穷举：
+
+| 客户端当前持有的流 | 提交时的状态 | 结果 |
+|---|---|---|
+| 无（`follow=false` 读完历史后已关闭） | 无轮在跑 | 开新轮，**一条流** |
+| 无 | 有轮在跑 | `409`，仍是零条流 |
+| 有（`follow=true` 跟着某轮） | 提交**不同** `turnId` | `409`，仍是那一条流 |
+| 有（`follow=true` 跟着某轮） | 提交**相同** `turnId` | 幂等命中，**两条流** |
+
+只有最后一行会出现两条。读历史不会导致两条流，因为 `follow=false` 的响应在补发完即关闭；`follow=true` 在无轮运行时同样立即关闭，不空等。
 
 对称地，**用正在运行的那个 `turnId` 提交则是幂等命中**：不开新轮，该 POST 的响应成为同一轮的又一个订阅者。若该客户端已经开着 `GET /events`，它此时持有两条流收同一份广播——浪费但无害，关掉一条即可。
 
@@ -434,33 +459,45 @@ data: {
 
 **没有大小阈值，内容一律内联。** 客户端无需任何额外往返即可拿到最终产物。
 
-**但内容不存进事件日志。** `turn_end` 落盘时只保留 `path` / `bytes` / `sha256`；`GET /history` 投影时**从工作区读取当前内容**贴上去：
+**但内容不存进事件日志。** `turn_end` 落盘时只保留 `path` / `bytes` / `sha256`；读取历史时投影**从工作区读取当前内容**贴上去：
 
 ```
 events 表        turn_end → {path, bytes, sha256}     小记录
 files / chunks   out/extra.js 的当前内容               分块存储
                           ↓
-GET /history     投影时 join，把当前内容附到最后一条 turn_end 上
+读取历史时      投影 join，把当前内容附到最后一条 turn_end 上
 ```
 
 这样安排消掉了四件事：
 
 - **不受 2 MB 行上限约束**——内容在 `chunks` 里，那套分块机制实测可承载 50 MB；若内容直接写进 `events.payload`，一个数百 KB 的 `widget.html` 就已经逼近上限
 - **不需要大小阈值**——没有"超过多少就退化"的分支，也就没有那个分支的测试与失败模式
-- **不需要独立的产物读取端点**——`GET /history` 永远携带当前内容
+- **不需要独立的产物读取端点**——读取历史时永远携带当前内容
 - **不需要"按路径取最新"的投影规则**——工作区里本来就只有当前版本，被取代的旧版本并不存在
 
 最后一条是顺带的收益：上一版设计需要在投影时判断哪条 `turn_end` 是某路径的最新一条，现在这个判断消失了。
 
 **语义随之明确：历史里的产物永远是当前状态，不是"当时那一版"的快照。** 这符合客户端的实际需要——它要的是能渲染的 widget，不是历史版本考古。若某路径在后续轮次中被删除，历史中它只剩元数据，这是忠实的呈现。
 
-**本版本不提供独立的产物读取端点。** 两条通道已经覆盖全部场景：在线时 `turn_end` 内联，离线或换设备时 `GET /history` 携带当前内容。再加一个 `GET /out/{path}` 只是第三种拿同一份数据的方式，而多一个端点就多一套鉴权、错误处理与测试。
+**本版本不提供独立的产物读取端点。** 两条通道已经覆盖全部场景：在线时 `turn_end` 内联，离线或换设备时 `GET /events?since=0&follow=false` 携带当前内容。再加一个 `GET /out/{path}` 只是第三种拿同一份数据的方式，而多一个端点就多一套鉴权、错误处理与测试。
 
 它在一种情况下会变得必要：**客户端只想取产物而不想拉整个会话历史**。目前没有这个需求——iOS 客户端打开会话时本来就要渲染对话。若将来出现（例如做一个"我的 widget"列表页，不展示对话），再加。
 
 客户端可据 `sha256` 判断本地缓存是否最新，避免重复写入。
 
 **`/out` 是强制约定而非建议。** `preview_widget` 渲染的是 `out/widget.html`；产物的判定以该目录下的实际文件为准，不以 agent 在回答里的声明为准。
+
+#### `since` 是通用游标，不只用于重试
+
+`POST /prompt` 的响应流在接入本轮实时事件之前，先补发 `since` 之后已有的记录。这覆盖三种情形：
+
+| 情形 | 作用 |
+|---|---|
+| 同 `turnId` 重试 | 不重复接收已经收到的部分 |
+| 刚读完历史就提交 | 消除"读历史的响应关闭"与"POST 到达"之间可能产生的缺口 |
+| 省略 `since` | 视为 `0`，补发整个会话——新客户端可以只用这一个请求开局 |
+
+第二种情形是它不只属于重试路径的理由：客户端用 `follow=false` 读到 `seq=41` 后提交新一轮时带上 `since=41`，**无论这期间是否有别的事件产生，流都是连续的**。
 
 #### 幂等：turnId 由客户端生成
 
@@ -583,7 +620,7 @@ data: {"sessionBusy":false}
 
 客户端读到 `turn_end` 即把 `out[].content` 写入本地缓存，整轮结束，**没有第二个请求**。
 
-`id: 59` 落盘时只保留 `out` 里的元数据，`content` 不进事件日志。后续 `GET /history` 回放时，投影会从工作区读取各路径的**当前**内容重新附上——因此新设备一次拉历史即可得到可渲染的 widget。
+`id: 59` 落盘时只保留 `out` 里的元数据，`content` 不进事件日志。后续回放时，投影会从工作区读取各路径的**当前**内容重新附上——因此新设备一次拉历史即可得到可渲染的 widget。
 
 过程中的两条 `out_file` 让客户端在 turn 结束前就能显示"已生成 extra.js"。它们不带内容，因为 agent 常常反复改同一个文件（写 → 预览 → 发现报错 → 改 → 再预览），内容跟着每次写入走就是把同一个文件发很多遍。`turn_end` 的清单**只含最终版本**。
 
@@ -668,7 +705,7 @@ data: {"sessionBusy":false}
 
 这样设计是为了消除一个真实竞态：客户端开 app 的流程是 `GET /sessions` 看到该会话繁忙，再开 `/events`——而这两步之间 turn 完全可能结束。若 `/events` 对已结束的 turn 报错（404 或 409），客户端就必须处理这个竞态；现在它只是拿到补发与终止事件，与正常路径无异。
 
-代价是 `/events` 在这种情况下退化为"用 SSE 传输的 history"，与 `GET /history` 有功能重叠。接受这份冗余，换取客户端的单一路径。
+`follow=false` 时这正是读取历史的常规用法，不存在多余的第二个端点。
 
 #### 请求处理器与 pi 事件的连接
 
@@ -838,6 +875,7 @@ session 作用域唯一的实质优势是消除竞态，而那个问题由"`POST
 
 ### 幂等与错误
 
+- **I** 读完历史（`follow=false`，末尾 `seq=N`）后以新 `turnId` 提交并带 `since=N`：响应流先补发期间产生的记录再接新轮事件，`seq` 连续无缺口
 - **I** 用同一 `turnId` 重复 `POST /prompt` 不启动第二轮：第二次接到同一轮的流上，打桩计数确认只发生一次 LLM 调用
 - **I** 对已结束的 `turnId` 提交：按 `since` 补发该轮之后的条目，随即 `stream_end` 并关闭
 - **I** 对已完成的 `turnId` 提交**不同的** `text`：服务端按幂等规则补发原轮事件而**不执行新文本**——此行为刻意如此，客户端有责任不重用 id（本例验证该风险确实存在，而非验证服务端会纠正它）
@@ -866,7 +904,7 @@ session 作用域唯一的实质优势是消除竞态，而那个问题由"`POST
 - **E** 客户端发出 prompt 后**立即杀掉进程**，turn 在服务端跑完；重开后历史完整，会话不再繁忙
 - **I** 断线期间完成的消息在重连后可见；断线期间半截的消息在其完成后作为完整条目出现
 - **I** 消息流到一半中断时 `events` 中不出现截断的 assistant 消息；恢复后该消息以完整形态出现且仅出现一次
-- **I** `GET /history` 的返回完全来自已落盘条目：关闭实时流后立即调用，助手消息正文与流式过程中累加所得一致
+- **I** `GET /events?since=0&follow=false` 的返回完全来自已落盘记录：关闭实时流后立即调用，助手消息正文与流式过程中累加所得一致
 - **I** `abort` 在 turn 中途生效：该 `turns` 行置为 `aborted` 且不被删除，保活 alarm 停止续排，中断检测不再重启该轮
 
 ### 上传与产物
@@ -876,12 +914,14 @@ session 作用域唯一的实质优势是消除竞态，而那个问题由"`POST
 - **I** 用同一 `turnId` 重试携带文件的 prompt：服务端不重复读取文件部分，工作区内容不变，且不产生第二轮
 - **I** `turn_end` 的 `out` 清单包含 `/out` 下全部文件、其 sha256 与 `content`，无大小阈值
 - **I** 落盘的 `turn_end` 记录中 `out[]` 不含 `content`：直接查 `events` 表确认内容未写入日志
-- **I** `GET /history` 返回的最后一条 `turn_end` 携带从工作区读出的**当前**内容；其 sha256 与工作区中该文件一致
-- **I** 某路径在后续轮次中被删除后，`GET /history` 中该路径只剩元数据，不返回陈旧内容
+- **I** 读取历史时最后一条 `turn_end` 携带从工作区读出的**当前**内容；其 sha256 与工作区中该文件一致
+- **I** 某路径在后续轮次中被删除后，历史中该路径只剩元数据，不返回陈旧内容
 - **I** agent 在一轮内多次写同一个 `/out` 文件：产生多个 `out_file` 事件，但 `turn_end` 的清单只含最终版本
-- **I** 一个 1 MB 的 `out/widget.html` 经 `turn_end` 与 `GET /history` 均完整返回——不存在退化为元数据的分支
+- **I** 一个 1 MB 的 `out/widget.html` 经实时 `turn_end` 与历史读取均完整返回——不存在退化为元数据的分支
 - **U** 事件清单中只出现规定的十种 `event:` 类型；`entry` / `out_file` / `turn_end` / `error` 带 `id:`，其余不带
-- **I** 新设备仅调用 `GET /sessions` 与 `GET /history` 即可得到对话历史与当前产物内容，无需额外请求
+- **I** 新设备仅调用 `GET /sessions` 与 `GET /events?since=0&follow=false` 即可得到对话历史与当前产物内容，无需额外请求
+- **I** `follow=false` 在有 turn 运行时仍然补发完即关闭，不成为订阅者；该请求结束后 DO 不因它保持在计费状态
+- **I** `follow=true` 在无 turn 运行时补发完即 `stream_end`，不空等
 - **I** 恢复 pi 会话只读取 `kind='pi_entry'` 的记录；`out_file` / `turn_end` / `error` 不进入模型上下文
 
 
