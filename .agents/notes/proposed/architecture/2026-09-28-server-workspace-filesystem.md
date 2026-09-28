@@ -42,6 +42,8 @@ webclip_widget 的服务端要把 pi coding agent 跑在 Cloudflare Workers 上�
 
 **没有 Sandbox 层。** 见下面的「验证用浏览器而不是 node」。
 
+本篇的验收标准如何分层承担，见[测试策略](../testing/2026-09-28-test-strategy.md)。
+
 ### 分块存储
 
 DO SQLite 的 2 MB 是**单行**上限，不是单 Durable Object 上限（后者是 10 GB）。所以大文件按字节切成多行：
@@ -279,21 +281,48 @@ R2 原本在本提案里有两个职责，现在都没了：
 
 ## 验收标准
 
-- 写入一个 5 MB 的 `source.html`，`read` 完整读回且字节相同；内容含多字节 UTF-8 字符，验证分块边界不产生乱码
-- 在该文件上执行 `grep -rn "pattern" /workspace` 与 `rg`，命中位于**分块边界两侧和跨越边界**的三处 pattern，结果与真实 ripgrep 一致，且全程零子请求
-- `find /workspace -name "*.json"` 与 `ls`、`cat`、管道、重定向在 L1 上可用
-- pi 的 `read` / `write` / `edit` / `ls` / `find` 工具经由 `*Operations` 指向 L1，工具的参数校验、截断和 diff 行为与 pi 原生一致
-- 同一文件连续 grep 十次只触发一次分块重组（缓存命中），写入后下一次 grep 重新重组
-- 一轮 turn 在客户端**全程离线**的情况下跑完，客户端重连后通过 `Last-Event-ID` 拿到完整的事件序列，且不重复
-- turn 执行期间保活失效导致 DO 被驱逐时，alarm 触发后**从已落盘条目继续该轮**；工具此前写入的文件完整可见，不因中断丢失
-- 密钥不进入工具环境：沿用 edge-mac-widget 的 `PI_*` 白名单，验证 `LLM_API_KEY` 不出现在任何 bash 调用的 env 里
-- `preview_widget` 对一个含语法错误的 `extra.js` 返回该错误；对一个语法正确但 `querySelector` 返回 null 的版本返回运行时错误；对正确版本返回截图且错误列表为空——三者是不同的返回，不能混为一类失败
-- `widget.html` 中 `<script src="extra.js">` 经请求拦截从 L1 解析成功；引用一个不存在的文件时产生 `requestfailed` 条目
-- 模型执行 `node --check extra.js` 时得到指向 `preview_widget` 的指引文本，而非 `command not found`；`js-exec` 与 `python3` 得到指向 `sed`/`awk`/`jq` 的指引
-- 导入来自 `just-bash/browser`，构建产物中不含 `node:worker_threads`、`node:fs` 或 `new Worker` 引用，且 `grep` / `rg` / `find` / `sed` / `awk` / `jq` 在部署后的 Worker 里实际可执行（而非仅在本地 Node 下通过）
-- 连续三次 `preview_widget` 后，出站上下文中只有最近一张截图，更早两张为文字摘要，而 SQLite 中三条原始条目完整保留
-- `preview_widget` 在同一 turn 内连续调用时复用同一浏览器会话（不是每次 `launch`），且不因此额外占用 DO 的 alarm 槽位
-- 工作区之外的路径（`/favicon.ico` 等）不进入 `preview_widget` 返回的错误列表：拦截器对它们响应 `204` 而非 `abort()`
+分层归属见[测试策略](../testing/2026-09-28-test-strategy.md)；每条标注承担它的层（U 单元 / I 集成 / E 部署后 e2e）。
+
+### 分块存储与 IFileSystem
+
+- **U** 写入 5 MB 文件后 `readFileBuffer` 返回的字节与写入完全相同（逐字节比对，非长度比对）
+- **U** 内容含多字节 UTF-8 字符且**恰好跨越分块边界**时，重组解码无乱码——按字节切分而非按字符
+- **U** `getAllPaths()` 同步返回，不返回 Promise；结果包含全部已写入路径且不含已删除路径
+- **U** `IFileSystem` 的 21 个方法全部实现；`stat` / `lstat` / `readdir` / `rm` / `mv` / `cp` 对不存在的路径抛出而非静默成功
+- **I** 单次 `SELECT … ORDER BY idx` 返回 5 MB 的全部分块；分块数与文件大小一致
+- **I** 同一文件连续读取十次只触发一次分块重组（缓存命中）；写入后下一次读取重新重组
+- **I** 超过 1 MB 的文件与刚好 512 KB 的文件都能正确往返（边界值）
+
+### shell 命令
+
+- **I** `grep -rn "pattern" /workspace` 命中位于**分块边界两侧与跨越边界**的三处 pattern，结果与真实 ripgrep 一致
+- **I** `rg` 与 `grep` 对同一输入给出一致的命中行号与内容
+- **I** `find /workspace -name "*.json"`、`ls`、`cat`、管道、重定向在工作区上可用
+- **I** 全程零子请求：执行上述命令期间不产生任何对外部服务的调用
+- **I** 导入来自 `just-bash/browser`；构建产物中不含 `node:worker_threads`、`node:fs` 或 `new Worker` 引用
+- **I** 模型执行 `node --check extra.js` 得到指向 `preview_widget` 的指引文本，而非 `command not found`；`js-exec` 与 `python3` 得到指向 `sed`/`awk`/`jq` 的指引
+- **U** 使用 re2js 不支持的正则（反向引用、前后向断言）时返回可理解的错误，而非静默不匹配
+
+### pi 工具接入
+
+- **I** pi 的 `read` / `write` / `edit` / `ls` / `find` 经由 `*Operations` 指向工作区；参数校验、截断与 diff 行为与 pi 原生一致
+- **I** pi 的内置 `grep` 被同名 `customTools` 覆盖：工具注册表中生效的是自定义实现，且不发生 ripgrep spawn
+- **I** `read` 对超出其输出上限的文件按 pi 原生规则截断，而非返回整个 5 MB
+
+### preview_widget
+
+- **I** 对含语法错误的 `extra.js` 返回该错误；对语法正确但 `querySelector` 返回 null 的版本返回运行时错误；对正确版本返回截图且错误列表为空——三者是不同的返回，不能混为一类失败
+- **I** `widget.html` 中 `<script src="extra.js">` 经请求拦截从工作区解析并**实际执行**（断言脚本对 DOM 的改动，而非仅断言请求被拦截）
+- **I** 引用一个不存在的文件时产生 `requestfailed` 条目
+- **I** 工作区之外的路径（`/favicon.ico` 等）不进入返回的错误列表：拦截器对它们响应 `204` 而非 `abort()`
+- **I** 同一 turn 内连续调用复用同一浏览器会话（不是每次 `launch`），且不额外占用 DO 的 alarm 槽位
+- **I** 连续三次调用后，出站上下文中只有最近一张截图，更早两张为文字摘要，而 SQLite 中三条原始条目完整保留
+- 任何用例都**不对截图做像素级断言**——判断渲染正确性用 DOM 文本与节点存在性
+
+### 跨层
+
+- **E** 一轮 turn 在客户端**全程离线**的情况下跑完，客户端重连后通过 `Last-Event-ID` 拿到完整的事件序列，且不重复
+- **I** 保活失效导致中断时，alarm 触发后从已落盘条目继续该轮；工具此前写入的文件完整可见，不因中断丢失
 
 ## 风险
 
