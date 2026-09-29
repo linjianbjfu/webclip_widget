@@ -7,7 +7,9 @@
  *
  *   webclip sessions                    list
  *   webclip new [title]                 create
- *   webclip prompt <session> <text>     run a turn, stream it
+ *   webclip prompt <session> <text> [--file PATH]... [--gzip]
+ *                                       run a turn, optionally uploading the
+ *                                       captured page and screenshot
  *   webclip events <session> [since]    replay and follow
  *   webclip abort <session>
  *   webclip rm <session>
@@ -85,7 +87,21 @@ async function main() {
     }
     case "prompt": {
       const [sessionId, ...rest] = args;
-      const result = await client.prompt({ sessionId, text: rest.join(" "), onFrame: render });
+      const files = [];
+      let gzip = false;
+      const words = [];
+      for (let i = 0; i < rest.length; i++) {
+        if (rest[i] === "--file") files.push(rest[++i]);
+        else if (rest[i] === "--gzip") gzip = true;
+        else words.push(rest[i]);
+      }
+      const result = await client.prompt({
+        sessionId,
+        text: words.join(" "),
+        files,
+        gzip,
+        onFrame: render,
+      });
       if (result.status !== 200) {
         console.error(`\n${result.status}`, JSON.stringify(result.body));
         process.exit(1);

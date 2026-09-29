@@ -11,6 +11,10 @@
  * assertion on wording would either be vacuous or flaky.
  */
 
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { assertMonotonic, assertNoGapOrRepeat, Client, cursors, ProtocolError } from "./client.mjs";
 
 const WRITE_PROMPT =
@@ -207,6 +211,40 @@ export async function runChecks(config) {
       }
       if (out.some(f => !f.sha256)) throw new ProtocolError("replayed artefact lacked a hash");
       return `${out.length} artefact(s), metadata only`;
+    }),
+  );
+
+  console.log("\nupload");
+  await reporter.run("a gzipped page reaches the workspace decoded", () =>
+    withSession(client, async sessionId => {
+      const dir = await mkdtemp(join(tmpdir(), "webclip-e2e-"));
+      try {
+        // A marker the model must read back out of the uploaded file, so the
+        // check fails if the upload never landed or landed still compressed.
+        const marker = `MARKER-${Math.random().toString(36).slice(2, 10)}`;
+        const page = join(dir, "source.html");
+        await writeFile(page, `<html><body><p id="m">${marker}</p>${"<span>pad</span>".repeat(400)}</body></html>`);
+        const shot = join(dir, "screenshot.png");
+        await writeFile(shot, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+
+        const { frames, status } = await client.prompt({
+          sessionId,
+          text: "Run: grep -o 'MARKER-[a-z0-9]*' source.html. Then reply with just that marker.",
+          files: [page, shot],
+          gzip: true,
+        });
+        if (status !== 200) throw new ProtocolError(`prompt returned ${status}`);
+        const end = frames.find(f => f.event === "turn_end");
+        if (end?.data.reason !== "completed") throw new ProtocolError(`turn ${end?.data.reason}`);
+
+        // grep found it, so the bytes in the workspace are the decoded page —
+        // a still-gzipped file would not match.
+        const sawMarker = frames.some(f => JSON.stringify(f.data).includes(marker));
+        if (!sawMarker) throw new ProtocolError("the uploaded page's marker never appeared in any tool output");
+        return "gzip decoded, grep matched";
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
     }),
   );
 

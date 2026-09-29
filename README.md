@@ -80,6 +80,29 @@ npm run cli -- sessions                # 列表
 npm run cli -- abort <session>
 ```
 
+**首轮带上网页与截图**：
+
+```bash
+npm run cli -- prompt <session> \
+  --file ./source.html --file ./screenshot.png --gzip \
+  "读 source.html，把报价做成 widget"
+```
+
+`--file` 可重复，文件写入工作区根目录。`--gzip` 只压缩文本类扩展名——服务端解压后再落盘，因此 `grep` 看到的是真实字节；PNG 之类不会被再压一遍。
+
+### 指向本地
+
+```bash
+npm run dev    # 另开一个终端
+
+export WEBCLIP_URL=http://localhost:8799
+export WEBCLIP_TOKEN=$(grep AUTH_TOKEN .dev.vars | cut -d= -f2-)
+export WEBCLIP_USER=me
+npm run e2e
+```
+
+`.dev.vars` **必须包含 `AUTH_TOKEN`**，否则本地服务对所有请求返回 503——密钥未配置时它失败关闭，不会放行。
+
 ```bash
 npm run e2e                  # 端到端检查，约 20 秒
 WEBCLIP_SLOW=1 npm run e2e   # 额外跑保活用例，需 2–5 分钟

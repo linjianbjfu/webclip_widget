@@ -11,6 +11,9 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { basename } from "node:path";
+import { readFile } from "node:fs/promises";
+import { gzipSync } from "node:zlib";
 
 import { SseParser } from "./sse.mjs";
 
@@ -80,19 +83,33 @@ export class Client {
    * @param {number} [options.since] Client cursor.
    * @param {number} [options.stopAfter] Abandon the stream after this many
    *   frames, to reproduce a client that vanishes mid-turn.
+   * @param {string[]} [options.files] Paths to upload into the workspace root.
+   *   Their presence switches the request to multipart.
+   * @param {boolean} [options.gzip] Compress text uploads. The server decodes
+   *   them before storing, so later readers still see the real bytes.
    * @param {(frame: import("./sse.mjs").Frame) => void} [options.onFrame]
    */
   async prompt(options) {
     const turnId = options.turnId ?? this.newTurnId();
-    const body = JSON.stringify({
-      turnId,
-      text: options.text,
-      ...(options.since === undefined ? {} : { since: options.since }),
-    });
+    const multipart = (options.files ?? []).length > 0;
+
+    const request = multipart
+      ? {
+          body: await buildForm(turnId, options, this.constructor),
+          headers: this.#headers,
+        }
+      : {
+          body: JSON.stringify({
+            turnId,
+            text: options.text,
+            ...(options.since === undefined ? {} : { since: options.since }),
+          }),
+          headers: { ...this.#headers, "content-type": "application/json" },
+        };
+
     const response = await fetch(`${this.baseUrl}/v1/sessions/${options.sessionId}/prompt`, {
       method: "POST",
-      headers: { ...this.#headers, "content-type": "application/json" },
-      body,
+      ...request,
     });
     if (response.status !== 200) {
       return { turnId, status: response.status, body: await response.json().catch(() => null), frames: [] };
@@ -179,4 +196,31 @@ export function assertNoGapOrRepeat(before, after, whole, label) {
   if (missing.length > 0) {
     throw new ProtocolError(`${label}: ${missing.length} record(s) never delivered: ${missing.join(", ")}`);
   }
+}
+
+/**
+ * Build the multipart body carrying the captured page.
+ *
+ * Binary parts rather than base64 in JSON: a multi-megabyte page would inflate
+ * by a third on the way. Text parts are gzipped when asked — the server
+ * decodes them before storing, so `grep` still sees the real bytes — while
+ * images are sent as they are, since a PNG does not compress further.
+ */
+async function buildForm(turnId, options) {
+  const form = new FormData();
+  form.set("turnId", turnId);
+  if (options.text !== undefined) form.set("text", options.text);
+  if (options.since !== undefined) form.set("since", String(options.since));
+
+  for (const path of options.files ?? []) {
+    const raw = await readFile(path);
+    const name = basename(path);
+    const compressible = options.gzip === true && /\.(html?|css|js|json|txt|svg|md)$/i.test(name);
+    if (compressible) {
+      form.append("file", new File([gzipSync(raw)], `${name}.gz`, { type: "application/gzip" }));
+    } else {
+      form.append("file", new File([raw], name));
+    }
+  }
+  return form;
 }
