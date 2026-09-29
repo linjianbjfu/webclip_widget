@@ -52,6 +52,7 @@ scripts/           Agent Note 门禁脚本（Node 原生跑 .ts，无第三方�
 当前可用的门禁：
 
 ```bash
+npm run verify-model-limits   # 模型上限与网关声明一致（需网关凭据）
 npm run verify-notes          # 三个 Agent Note 门禁串跑
 npm run verify-agent-note-classification
 npm run verify-agent-note-format
