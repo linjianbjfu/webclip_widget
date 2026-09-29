@@ -52,7 +52,7 @@ Status: implemented
 
 ## 决策
 
-本篇的验收标准如何分层承担，见[测试策略](../../proposed/testing/2026-09-28-test-strategy.md)。
+本篇的验收标准如何分层承担，见[测试策略](../testing/2026-09-28-test-strategy.md)。
 
 ### 组件切分
 
@@ -849,7 +849,7 @@ session 作用域唯一的实质优势是消除竞态，而那个问题由"`POST
 
 ## 验证
 
-分层归属见[测试策略](../../proposed/testing/2026-09-28-test-strategy.md)。不依赖 pi 的层由 `test/` 下的自动化用例钉住，共 66 条，跑在真实 workerd 内；pi 接入与保活只能由部署后的实跑覆盖。
+分层归属见[测试策略](../testing/2026-09-28-test-strategy.md)。不依赖 pi 的层由 `test/` 下的自动化用例钉住，共 66 条，跑在真实 workerd 内；pi 接入与保活只能由部署后的实跑覆盖。
 
 ### 自动化覆盖
 

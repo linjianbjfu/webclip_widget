@@ -42,7 +42,7 @@ webclip_widget 的服务端要把 pi coding agent 跑在 Cloudflare Workers 上�
 
 **没有 Sandbox 层。** 见下面的「验证用浏览器而不是 node」。
 
-本篇的验收标准如何分层承担，见[测试策略](../../proposed/testing/2026-09-28-test-strategy.md)。
+本篇的验收标准如何分层承担，见[测试策略](../testing/2026-09-28-test-strategy.md)。
 
 ### 分块存储
 
@@ -313,7 +313,7 @@ Worker Loader 绑定已在本账号实测可用，不构成障碍。
 
 ## 验证
 
-分层归属见[测试策略](../../proposed/testing/2026-09-28-test-strategy.md)。下列由 `test/workspace-fs.test.ts`、`test/shell.test.ts` 与 `test/upload.test.ts` 中的自动化用例钉住，全部跑在真实 workerd 内：
+分层归属见[测试策略](../testing/2026-09-28-test-strategy.md)。下列由 `test/workspace-fs.test.ts`、`test/shell.test.ts` 与 `test/upload.test.ts` 中的自动化用例钉住，全部跑在真实 workerd 内：
 
 ### 分块存储与 IFileSystem
 

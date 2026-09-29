@@ -2,7 +2,7 @@
 
 把一个网页转成 widget 的 agent 服务端。[pi coding agent](https://github.com/earendil-works/pi) 作为 SDK 跑在 Cloudflare Workers + Durable Objects 上，**工具全部在服务端执行**——客户端是 iOS app，不保证在线。
 
-设计与取舍记录在 [`.agents/notes/proposed/`](.agents/notes/proposed/)。本文件只讲怎么跑起来。
+设计与取舍记录在 [`.agents/notes/implemented/`](.agents/notes/implemented/)。本文件只讲怎么跑起来。
 
 ## 形状
 
