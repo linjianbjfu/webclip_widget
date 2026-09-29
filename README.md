@@ -97,7 +97,7 @@ npm run cli -- prompt <session> \
 ```bash
 npm run dev    # 另开一个终端
 
-export WEBCLIP_URL=http://localhost:8799
+export WEBCLIP_URL=http://localhost:8787
 export WEBCLIP_TOKEN=$(grep AUTH_TOKEN .dev.vars | cut -d= -f2-)
 export WEBCLIP_USER=me
 npm run e2e
