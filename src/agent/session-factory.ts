@@ -16,6 +16,12 @@ import {
   type AgentSession,
   buildSessionContext,
   createAgentSession,
+  createBashToolDefinition,
+  createEditToolDefinition,
+  createFindToolDefinition,
+  createLsToolDefinition,
+  createReadToolDefinition,
+  createWriteToolDefinition,
   DefaultResourceLoader,
   type ModelRuntime,
   type SessionContext,
@@ -82,6 +88,21 @@ export async function openSession(input: OpenSessionInput): Promise<OpenedSessio
   const model = input.modelRuntime.getModel(input.providerId, input.modelId);
   if (!model) throw new Error(`model ${input.providerId}/${input.modelId} is not registered`);
 
+  // The `*Operations` seam is reached through each tool's definition factory,
+  // and those definitions are registered as `customTools`. A same-named custom
+  // tool replaces the built-in, so pi keeps its own argument validation,
+  // truncation and diffing while the IO is ours. Passing operations to
+  // `createAgentSession` directly does nothing: the built-ins stay in place and
+  // reach for the local filesystem and `child_process.spawn`.
+  const customTools = [
+    createBashToolDefinition(WORKSPACE_ROOT, { operations: operations.bash }),
+    createReadToolDefinition(WORKSPACE_ROOT, { operations: operations.read }),
+    createEditToolDefinition(WORKSPACE_ROOT, { operations: operations.edit }),
+    createWriteToolDefinition(WORKSPACE_ROOT, { operations: operations.write }),
+    createLsToolDefinition(WORKSPACE_ROOT, { operations: operations.ls }),
+    createFindToolDefinition(WORKSPACE_ROOT, { operations: operations.find }),
+  ];
+
   const { session } = await createAgentSession({
     cwd: WORKSPACE_ROOT,
     model,
@@ -94,7 +115,7 @@ export async function openSession(input: OpenSessionInput): Promise<OpenedSessio
       workspaceRoot: WORKSPACE_ROOT,
       outDir: OUT_DIR,
     }),
-    operations,
+    customTools,
     ...(restored ? { context: restored } : {}),
   } as Parameters<typeof createAgentSession>[0]);
 

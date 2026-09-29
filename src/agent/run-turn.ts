@@ -51,10 +51,16 @@ export async function runTurn(input: RunTurnInput): Promise<void> {
   const turn = store.turn(sessionId, turnId);
   if (!turn || turn.status !== "running") return;
 
-  const publish = (inputs: readonly AppendInput[]): void => {
-    if (inputs.length === 0) return;
-    for (const row of store.append(sessionId, inputs)) hub.broadcast(sessionId, rowToFrame(row));
+  /** Persist a batch and mark progress. Returns the rows so the caller decides what to broadcast. */
+  const persist = (inputs: readonly AppendInput[]): EventRow[] => {
+    if (inputs.length === 0) return [];
+    const rows = store.append(sessionId, inputs);
     store.markProgress(sessionId, turnId);
+    return rows;
+  };
+
+  const publish = (inputs: readonly AppendInput[]): void => {
+    for (const row of persist(inputs)) hub.broadcast(sessionId, rowToFrame(row));
   };
 
   try {
@@ -120,10 +126,19 @@ export async function runTurn(input: RunTurnInput): Promise<void> {
 
     const out = await collectOut(fs);
     store.endTurn(sessionId, turnId, "completed");
-    publish([{ turnId, kind: "turn_end", payload: { turnId, reason: "completed", out: stripContent(out) } }]);
-    // The live terminator carries content; the stored record does not, so a
-    // replay reads the current bytes from the workspace instead.
-    hub.broadcast(sessionId, { event: "turn_end", data: { turnId, reason: "completed", out } });
+    // Persisted and broadcast forms differ: the stored record keeps only
+    // metadata, so replaying a long session does not resend every version of
+    // every artefact, while the live frame inlines the bytes so a connected
+    // client needs no follow-up request. The stored row supplies the `seq`
+    // that the live frame carries, keeping one cursor across both.
+    const [stored] = persist([
+      { turnId, kind: "turn_end", payload: { turnId, reason: "completed", out: stripContent(out) } },
+    ]);
+    hub.broadcast(sessionId, {
+      event: "turn_end",
+      data: { turnId, reason: "completed", out },
+      ...(stored ? { seq: stored.seq } : {}),
+    });
     hub.closeAll(sessionId, streamEndFrame(false));
   } catch (error) {
     store.endTurn(sessionId, turnId, "failed");
