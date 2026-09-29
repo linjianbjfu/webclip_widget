@@ -1,0 +1,88 @@
+# webclip_widget
+
+把一个网页转成 widget 的 agent 服务端。[pi coding agent](https://github.com/earendil-works/pi) 作为 SDK 跑在 Cloudflare Workers + Durable Objects 上，**工具全部在服务端执行**——客户端是 iOS app，不保证在线。
+
+设计与取舍记录在 [`.agents/notes/proposed/`](.agents/notes/proposed/)。本文件只讲怎么跑起来。
+
+## 形状
+
+```
+iOS app ──HTTP/SSE──► Worker ──► UserAgentDO（每用户一个）
+                                   ├── pi AgentSession      编排
+                                   ├── SQLite               会话、事件日志、工作区
+                                   ├── just-bash            grep / rg / find / sed / awk / jq
+                                   ├── Browser Run          preview_widget
+                                   └── alarm                turn 保活 + 中断检测
+```
+
+工作区是 DO SQLite 里的虚拟文件系统，按 512 KB 分块。**分块对 `IFileSystem` 以上不可见**：`readFileBuffer` 先拼回完整字节，因此块大小影响不了任何命令的正确性。
+
+## 接口
+
+```
+POST   /v1/sessions                      建空会话 → { sessionId }
+GET    /v1/sessions                      列表（busy 由 turns 推导）
+DELETE /v1/sessions/{id}                 删除，连同工作区与日志
+POST   /v1/sessions/{id}/prompt          启动 turn → 200 text/event-stream
+GET    /v1/sessions/{id}/events?since=   补发 since 之后；有 turn 在跑则接上
+POST   /v1/sessions/{id}/abort           中止
+```
+
+每个请求带 `authorization: Bearer <AUTH_TOKEN>` 与 `x-webclip-user: <id>`。
+
+**首轮用 `multipart/form-data` 上传网页**，`file` 部分可重复，`.gz` 后缀或 `application/gzip` 会被解压后落盘。后续轮次用 JSON。
+
+`turnId` 由客户端生成，必须是小写 UUIDv4。它保证的性质是「同一次提交的重试给出同一个 id，不同的提交给出不同的 id」——**不能用计数器**：客户端重装后计数归零，可能命中幂等窗口内的已完成 turn，使用户的新输入被静默吞掉。
+
+## SSE 事件
+
+带 `id:` 的推进 `Last-Event-ID`，不带的不推进。增量因此不会让重连从一条消息的中间开始。
+
+| `event:` | `id:` | 用途 |
+|---|---|---|
+| `stream` | 否 | token 与思考增量，渲染用 |
+| `tool_start` / `tool_end` | 否 | agent 在做什么 |
+| `entry` | 是 | 完成的消息、工具调用、工具结果 |
+| `out_file` | 是 | `/out` 下的文件被写入 |
+| `turn_end` | 是 | 一轮结束，**实时版内联产物内容** |
+| `error` | 是 | 本轮失败，`code` 取自封闭集合 |
+| `stream_end` | 否 | 连接终止符 |
+
+**客户端只看 `stream_end` 决定是否重连**：收到它之后关闭是干净结束；未收到就关闭是掉线，带 `Last-Event-ID` 回来。
+
+产物落盘时只留 `path` / `bytes` / `sha256`，回放时由投影从工作区读当前内容——历史因此不随迭代轮数膨胀。
+
+## 本地运行
+
+```bash
+npm install
+cp .dev.vars.example .dev.vars   # 填 LLM_BASE_URL / LLM_API_KEY / AUTH_TOKEN
+npm run dev
+```
+
+```bash
+npm run check        # typecheck + 测试 + Agent Note 门禁
+npm test             # 65 条，跑在真实 workerd 里
+npm run typecheck
+```
+
+`preview_widget` 在本地需要 miniflare 下载 Chromium。**本机若是 Apple Silicon 可能拿到架构不匹配的二进制**（`spawn Unknown system error -88`），该能力只能在部署后验证。
+
+## 部署
+
+```bash
+npx wrangler secret put AUTH_TOKEN
+npx wrangler secret put LLM_API_KEY
+npx wrangler secret put LLM_BASE_URL
+npx wrangler deploy
+```
+
+**不要在 `wrangler.jsonc` 的 `vars` 里声明这三个**：空值会覆盖 secret。
+
+## 已知缺口
+
+- **`userId` 未经校验。** 持有 token 者可读写任意用户的会话；用户之间的边界目前不是安全边界。
+- **系统提示词只有骨架。** `BriefProvider` 固定了接口，内容是单独的工作。它的 `system()` 必须对同一 `sessionId` 逐字节稳定——上游按前缀匹配缓存，时间戳或依赖迭代顺序的拼装会让每一轮都未命中，而症状只是账单变贵、首 token 变慢。
+- **一轮进行中不支持插入新提示**，返回 `409`，客户端本地排队。
+- **渲染成功不等于 widget 正确。** `preview_widget` 抓得到语法错误、未捕获异常与加载失败，抓不到「渲染出来了但数字是编的」。
+- **目标运行环境是 iOS 的 WebView，而 Browser Run 是 Chromium。** 截图是近似，没有任何服务端方案能验证 WKWebView 的真实行为。
