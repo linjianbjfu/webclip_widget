@@ -273,11 +273,33 @@ R2 原本在本提案里有两个职责，现在都没了：
 - **承载超过 2 MB 的文件**——分块存储解决了，且解决得更好（文件留在可搜索的那一层）
 - **作为 Sandbox 的同步介质**——Sandbox 不进 v1
 
-所以 v1 不引入 R2。L2 落地时再加，那时它的职责是明确的：`mountBucket` 只认 S3 兼容存储，DO 挂不上，同步必须借道 R2。
+所以 v1 不引入 R2。将来把它加回来的条件有三条，各自明确：
+
+| 触发条件 | R2 承担什么 |
+|---|---|
+| Sandbox 落地 | 同步介质——`mountBucket` 只认 S3 兼容存储，DO 挂不上 |
+| 产物需要公网 URL | **DO 里的文件没有 URL。** 第三方要打开生成的 widget 时，只有把文件 `put` 进 R2 再签一个限时预签名 GET 才能给出可访问的链接 |
+| 单文件超出 DO 承载 | 单 DO 上限 10 GB；R2 单对象 5 TiB |
+
+第二条容易被忽略，因为 v1 的客户端是自家 iOS app，走认证过的 API 即可，不需要 URL。`@cloudflare/computer` 正是为此提供了独立的 assets 路径（工作区文件 `put` 进 R2 后返回预签名 URL），而它的权威状态同样在 DO SQLite——**R2 在那套设计里只出现在两端：导入种子数据、导出可分享链接，不在读写搜索的路径上**。这与本篇的结论一致。
 
 ## 曾考虑的替代方案
 
 **大文件溢出到 R2（本提案的前一版）。** 设一个 1 MB 阈值，超过的文件存 R2，L1 只留索引。否决它的是 workspace 的实际形状：唯一的大文件是网页 source，而那**正是模型要反复 grep 的对象**。把它放进没有搜索原语的那一层，意味着 `grep -r` 会静默地跳过最重要的文件——这不是性能退化，是正确性错误，而且是隐蔽的（grep 返回 0 结果，看起来像"没匹配到"）。分块存储没有这个缺陷，且实现更简单。
+
+**用 `@cloudflare/computer` 的 isolate shell 而不是自己实现。** 这是 Cloudflare 官方的同形方案：Durable Object SQLite 作为权威状态，`just-bash` 作为 shell，容器 backend 是可选的独立 export，不 import 即不进包。调研（`@cloudflare/computer@0.3.1`）确认它与本篇设计高度重合，**分块常量同为 512 KB**，而其 schema 更成熟——`vfs_nodes` / `vfs_dirents` 是真正的 inode 模型，`vfs_blobs` / `vfs_blob_bytes` 做内容寻址去重，另有按 blob hash 的 LRU 缓存。
+
+它能解决本篇记录的两条风险：
+
+- `grep` / `find` 是 DO 侧的一等 RPC 原语，搜索在 DO 内完成、只回传匹配项，而不是把整个文件拉过边界
+- shell 跑在通过 Worker Loader 铸造的独立 isolate 里，其 CPU 与内存不占用 DO——直接缓解「DO 单实例 CPU 串行」那条风险
+- `js-exec` / `python` / `sqlite` / `curl` 作为可选命令组可用（各 12–104 KB，未 import 即被打包器丢弃），缓解「模型无法写脚本处理 HTML」那条风险
+
+Worker Loader 绑定已在本账号实测可用，不构成障碍。
+
+**否决理由是其自述的成熟度**：两个包的 README 均写明 "PREVIEW ONLY … It is NOT suitable for production use at this time"，且声明 API 不稳定。此外它要求 `experimental` compatibility flag，而底层的 `@cloudflare/dofs` 与 `@cloudflare/computer-rpc` **未发布到 npm**（仅被打包进 `@cloudflare/computer` 的 dist），因此无法只取文件系统层。
+
+**迁移成本是有界的**：两边的 shell 都实现 just-bash 的 `IFileSystem`，接口相同。因此本篇要求把 `IFileSystem` 的实现与其余代码隔离干净——将来该包稳定后换底层，改动应当局限在这一层。**这条不是可选的工程洁癖，而是本次否决所依赖的前提。**
 
 **纯内存 workspace（`InMemoryFs`）。** 最简单，性能最好，但 DO 驱逐即全丢。保活 alarm 让 turn 内的驱逐变得罕见，却挡不住代码部署强制重启——那时工作区连同未落盘的成果一起消失，而用户的 prompt 已经付过 LLM 费用。Workers 128 MB 的 isolate 上限也是硬顶。**作为 L1 之上的读缓存保留**（见分块存储一节），但不能作为事实来源。
 
@@ -302,6 +324,7 @@ R2 原本在本提案里有两个职责，现在都没了：
 - **I** 对 `/out` 下任意路径的写入都产生 `out_file` 事件——`write` 工具、`edit` 工具、以及 shell 重定向（`… > out/extra.js`）三条路径均覆盖
 - **I** 上传的 gzip 文件部分被解压后落盘：工作区中的 `source.html` 字节与客户端压缩前完全一致
 - **U** `IFileSystem` 的 21 个方法全部实现；`stat` / `lstat` / `readdir` / `rm` / `mv` / `cp` 对不存在的路径抛出而非静默成功
+- **U** `IFileSystem` 的实现不被工具层以外的代码直接依赖：替换该实现（例如换成 `@cloudflare/computer` 的 Workspace）无需改动 pi 接入、协议层或会话管理——这是否决官方包时所依赖的前提，需要有用例守住
 - **I** 单次 `SELECT … ORDER BY idx` 返回 5 MB 的全部分块；分块数与文件大小一致
 - **I** 同一文件连续读取十次只触发一次分块重组（缓存命中）；写入后下一次读取重新重组
 - **I** 超过 1 MB 的文件与刚好 512 KB 的文件都能正确往返（边界值）
