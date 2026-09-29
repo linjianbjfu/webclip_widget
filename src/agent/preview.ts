@@ -125,6 +125,12 @@ export async function renderPreview(
   }
 }
 
+/** The one line of a launch failure worth showing the model. */
+function reason(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return (message.split("\n")[0] ?? "").slice(0, 200);
+}
+
 export function createPreviewTool(browserBinding: BrowserRun, fs: WorkspaceFs) {
   return defineTool({
     name: "preview_widget",
@@ -140,7 +146,19 @@ export function createPreviewTool(browserBinding: BrowserRun, fs: WorkspaceFs) {
       ),
     }),
     async execute(_toolCallId, params) {
-      const result = await renderPreview(browserBinding, fs, params.entry ?? "widget.html");
+      let result: PreviewResult;
+      try {
+        result = await renderPreview(browserBinding, fs, params.entry ?? "widget.html");
+      } catch (error) {
+        // A browser that will not start is an environment fact, not something
+        // the model can repair. Pi would otherwise hand it the raw Node stack,
+        // which fills the context with local paths and suggests no next step.
+        return {
+          content: [{ type: "text" as const, text: `preview unavailable: ${reason(error)}` }],
+          isError: true,
+          details: undefined,
+        };
+      }
       const lines = [
         result.syntaxError ? `syntax error in extra.js: ${result.syntaxError}` : "syntax: ok",
         result.errors.length > 0 ? `errors:\n${result.errors.join("\n")}` : "errors: none",
