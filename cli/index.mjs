@@ -66,6 +66,13 @@ async function main() {
         else if (rest[i] === "--gzip") gzip = true;
         else words.push(rest[i]);
       }
+      if (!sessionId || words.length === 0) {
+        // Without this the session id absorbs the message and the server
+        // answers 404 for a session nobody meant to name.
+        console.error('usage: webclip prompt <session> "<message>" [--file PATH]... [--gzip]');
+        console.error("  a session id comes from `webclip new`; `webclip chat` makes one for you");
+        process.exit(2);
+      }
       const result = await client.prompt({
         sessionId,
         text: words.join(" "),
