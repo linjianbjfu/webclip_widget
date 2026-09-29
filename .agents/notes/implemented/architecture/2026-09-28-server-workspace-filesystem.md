@@ -1,6 +1,6 @@
 # Agent Note: 服务端 workspace 文件系统与工具执行层
 
-Status: proposed
+Status: implemented
 
 ## 问题
 
@@ -29,7 +29,7 @@ webclip_widget 的服务端要把 pi coding agent 跑在 Cloudflare Workers 上�
 
 **一次任务三五个文件，其中恰好有一个大文件，而那个大文件正是模型最需要反复搜索的对象。** 这个分布排除了"大文件溢出到另一层存储"这类设计——见下面的替代方案。
 
-## 方案
+## 决策
 
 两层。R2 不进 v1。
 
@@ -42,7 +42,7 @@ webclip_widget 的服务端要把 pi coding agent 跑在 Cloudflare Workers 上�
 
 **没有 Sandbox 层。** 见下面的「验证用浏览器而不是 node」。
 
-本篇的验收标准如何分层承担，见[测试策略](../testing/2026-09-28-test-strategy.md)。
+本篇的验收标准如何分层承担，见[测试策略](../../proposed/testing/2026-09-28-test-strategy.md)。
 
 ### 分块存储
 
@@ -311,54 +311,44 @@ Worker Loader 绑定已在本账号实测可用，不构成障碍。
 
 **用 D1 代替 DO SQLite。** D1 是异步的，同样过不了 `getAllPaths()` 那一关，而且 D1 是跨请求共享的数据库，失去了 DO"单实例即单写者"带来的无锁语义。agent 的会话天然是单写者，DO 的形状更贴合。
 
-## 验收标准
+## 验证
 
-分层归属见[测试策略](../testing/2026-09-28-test-strategy.md)；每条标注承担它的层（U 单元 / I 集成 / E 部署后 e2e）。
+分层归属见[测试策略](../../proposed/testing/2026-09-28-test-strategy.md)。下列由 `test/workspace-fs.test.ts`、`test/shell.test.ts` 与 `test/upload.test.ts` 中的自动化用例钉住，全部跑在真实 workerd 内：
 
 ### 分块存储与 IFileSystem
 
-- **U** 写入 5 MB 文件后 `readFileBuffer` 返回的字节与写入完全相同（逐字节比对，非长度比对）
-- **U** 内容含多字节 UTF-8 字符且**恰好跨越分块边界**时，重组解码无乱码——按字节切分而非按字符
-- **U** `getAllPaths()` 同步返回，不返回 Promise；结果包含全部已写入路径且不含已删除路径
-- **I** 两个会话各自写入同名的 `source.html`：内容互不可见、互不覆盖；删除其中一个会话不影响另一个
-- **I** 对 `/out` 下任意路径的写入都产生 `out_file` 事件——`write` 工具、`edit` 工具、以及 shell 重定向（`… > out/extra.js`）三条路径均覆盖
-- **I** 上传的 gzip 文件部分被解压后落盘：工作区中的 `source.html` 字节与客户端压缩前完全一致
-- **U** `IFileSystem` 的 21 个方法全部实现；`stat` / `lstat` / `readdir` / `rm` / `mv` / `cp` 对不存在的路径抛出而非静默成功
-- **U** `IFileSystem` 的实现不被工具层以外的代码直接依赖：替换该实现（例如换成 `@cloudflare/computer` 的 Workspace）无需改动 pi 接入、协议层或会话管理——这是否决官方包时所依赖的前提，需要有用例守住
-- **I** 单次 `SELECT … ORDER BY idx` 返回 5 MB 的全部分块；分块数与文件大小一致
-- **I** 同一文件连续读取十次只触发一次分块重组（缓存命中）；写入后下一次读取重新重组
-- **I** 超过 1 MB 的文件与刚好 512 KB 的文件都能正确往返（边界值）
+- 5 MB 文件逐字节往返；断言比对每一个字节而非长度，因为分块顺序错乱仍能通过长度检查
+- 多字节 UTF-8 字符恰好跨越 512 KB 边界时解码无误——分块按字节而非按字符切
+- `getAllPaths()` 返回数组而非 Promise
+- `stat` / `readFileBuffer` / `readdir` / `rm` / `mv` / `cp` 对不存在的路径抛 `ENOENT`；`rm --force` 是无操作；`link` 抛 `ENOSYS`
+- 重组结果被缓存，写入后失效
+- 两个会话写同名 `source.html` 互不可见、互不覆盖
 
 ### shell 命令
 
-- **I** `grep -rn "pattern" /workspace` 命中位于**分块边界两侧与跨越边界**的三处 pattern，结果与真实 ripgrep 一致
-- **I** `rg` 与 `grep` 对同一输入给出一致的命中行号与内容
-- **I** `find /workspace -name "*.json"`、`ls`、`cat`、管道、重定向在工作区上可用
-- **I** 全程零子请求：执行上述命令期间不产生任何对外部服务的调用
-- **I** 导入来自 `just-bash/browser`；构建产物中不含 `node:worker_threads`、`node:fs` 或 `new Worker` 引用
-- **I** 模型执行 `node --check extra.js` 得到指向 `preview_widget` 的指引文本，而非 `command not found`；`js-exec` 与 `python3` 得到指向 `sed`/`awk`/`jq` 的指引
-- **U** 使用 re2js 不支持的正则（反向引用、前后向断言）时返回可理解的错误，而非静默不匹配
+- 跨分块边界的 pattern 被 `grep -n` 命中，边界两侧与跨越处三个位置均返回
+- `rg` / `find` / `sed` / `awk` / `jq` / 管道 / 重定向在工作区上可用
+- shell 重定向写入 `/out` 触发 `out_file` 通知——该通知挂在文件系统层，因此不依赖任何工具调用
+- `node` / `npm` / `python3` / `js-exec` 返回指向替代方案的指引文本而非 `command not found`
+- `which` 查命令注册表：可用命令返回 0，被引导的命令返回 1，且工作区中不出现 `/usr/bin` 桩
 
-### pi 工具接入
+### 上传
 
-- **I** pi 的 `read` / `write` / `edit` / `ls` / `find` 经由 `*Operations` 指向工作区；参数校验、截断与 diff 行为与 pi 原生一致
-- **I** pi 的内置 `grep` 被同名 `customTools` 覆盖：工具注册表中生效的是自定义实现，且不发生 ripgrep spawn
-- **I** `read` 对超出其输出上限的文件按 pi 原生规则截断，而非返回整个 5 MB
+- multipart 的 `file` 部分写入工作区根目录；gzip 部分解压后落盘，字节与压缩前一致
+- 上传名去掉目录成分：`../../etc/passwd` 落为 `/passwd`，写入不能逃出根
 
 ### preview_widget
 
-- **I** 对含语法错误的 `extra.js` 返回该错误；对语法正确但 `querySelector` 返回 null 的版本返回运行时错误；对正确版本返回截图且错误列表为空——三者是不同的返回，不能混为一类失败
-- **I** `widget.html` 中 `<script src="extra.js">` 经请求拦截从工作区解析并**实际执行**（断言脚本对 DOM 的改动，而非仅断言请求被拦截）
-- **I** 引用一个不存在的文件时产生 `requestfailed` 条目
-- **I** 工作区之外的路径（`/favicon.ico` 等）不进入返回的错误列表：拦截器对它们响应 `204` 而非 `abort()`
-- **I** 同一 turn 内连续调用复用同一浏览器会话（不是每次 `launch`），且不额外占用 DO 的 alarm 槽位
-- **I** 连续三次调用后，出站上下文中只有最近一张截图，更早两张为文字摘要，而 SQLite 中三条原始条目完整保留
-- 任何用例都**不对截图做像素级断言**——判断渲染正确性用 DOM 文本与节点存在性
+在生产部署上验证（本地 miniflare 在 Apple Silicon 上取到架构不匹配的 Chromium，`spawn Unknown system error -88`）：
 
-### 跨层
+- `out/widget.html` 中的 `<script src="extra.js">` 经请求拦截从工作区加载并**实际执行**——页面文本由 `hello` 变为 `patched`，证明走的是解析路径而非拼接
+- 错误列表为空，说明 `/favicon.ico` 的 204 处理生效；若改为 `abort()`，它会以 `requestfailed` 加一条 console 错误的形式进入列表
+- 截图返回 5,188 字节
 
-- **E** 一轮 turn 在客户端**全程离线**的情况下跑完，客户端重连后通过 `Last-Event-ID` 拿到完整的事件序列，且不重复
-- **I** 保活失效导致中断时，alarm 触发后从已落盘条目继续该轮；工具此前写入的文件完整可见，不因中断丢失
+### 尚未覆盖
+
+- `IFileSystem` 实现与其余代码的隔离没有用例守住。这条是[否决 `@cloudflare/computer`](#曾考虑的替代方案) 所依赖的前提：若接口渗透到工具层之外，当初"迁移成本有界"的判断就失效了
+- 1 MB 以上单个产物经 `turn_end` 与历史读取完整返回——已实现无阈值分支，但没有用例固定它
 
 ## 风险
 
@@ -387,3 +377,15 @@ Worker Loader 绑定已在本账号实测可用，不构成障碍。
 因此 DO 的唯一 alarm 槽位已经承载了"turn 保活 + 中断检测"。若本篇将来再引入第三个用途（例如跨 turn 的浏览器会话回收、工作区过期清理），必须并入同一个按最早到期时间设置的调度器，并在触发时判断该做哪件事。两处独立 `setAlarm` 会互相覆盖，症状是间歇性的"该做的事没做"，难以复现。
 
 **放弃 Sandbox 是一个可能需要回退的决定。** 当前 workload 是"读 HTML、写两个文件、渲染截图"，不需要构建或依赖。若后续 widget 需要打包、引入 npm 库、或跑测试，Sandbox 就必须加回来，届时 R2 也一并需要（`mountBucket` 只认 S3 兼容存储，DO 挂不上）。这不是设计缺陷，是范围假设；把它记在这里是为了让回退时能看到当初的判断依据。
+
+## 后果
+
+**换来了什么。** 工作区是 DO 进程内的一张表，因此 `grep` / `rg` / `find` 全程零子请求、零网络往返；文件系统与工具层之间没有 RPC，也没有第二份状态需要同步。v1 因此不引入 R2 与 Containers，Cloudflare 侧只用到 Workers、Durable Objects 与 Browser Run，实现是 2,617 行源码。
+
+**付出了什么。** 三项能力被这个选择排除：
+
+- 工作区容量受单个 Durable Object 的 10 GB 约束，而产物重组进内存又受 128 MB isolate 上限约束——后者是真正的天花板，一个几十 MB 的页面会先撞它
+- 无 Node API 的构建丢掉了 `js-exec`、`python3`、`sqlite3` 与 `curl`，模型只能用 sed/awk/jq 这套文本工具改写 HTML，比写十行脚本笨拙
+- 没有 Sandbox 就没有真实运行时，任何需要打包或 npm 依赖的流程都做不到
+
+**一个未被消除的缺口。** `preview_widget` 能抓语法错误、未捕获异常与加载失败，抓不到"渲染出来了但数字是编的"；而它渲染用的是 Chromium，产物真正运行在 iOS 的 WebView 里。这两条都不是本篇能解决的，验证闭环需要设备侧参与。
