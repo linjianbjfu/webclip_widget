@@ -73,7 +73,12 @@ export async function runTurn(input: RunTurnInput): Promise<void> {
       modelId: session?.model ?? config.defaultModel,
       fs,
       sessionId,
-      history: store.piEntries(sessionId).map(row => row.entry),
+      // A resumed turn drops its own records: its user message is already in
+      // the log, and `prompt()` appends it again. The partial assistant work
+      // is discarded with it — that cost is inherent to re-issuing the call.
+      history: store
+        .piEntries(sessionId, turn.recoveries > 0 ? turnId : undefined)
+        .map(row => row.entry),
       ...(env.BROWSER ? { browser: env.BROWSER } : {}),
     });
 

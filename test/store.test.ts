@@ -57,6 +57,22 @@ describe("event log", () => {
     });
   });
 
+  it("drops one turn's entries when rebuilding a resumed turn", async () => {
+    await withStore("exclude", async store => {
+      store.createSession("s1");
+      store.append("s1", [
+        { turnId: "t1", kind: "pi_entry", payload: { turn: 1 } },
+        { turnId: "t2", kind: "pi_entry", payload: { turn: 2 } },
+      ]);
+      // Resuming t2 must not replay its own user message: prompt() appends it
+      // again, and the model would see it twice.
+      expect(store.piEntries("s1").map(e => e.entry)).toEqual([{ turn: 1 }, { turn: 2 }]);
+      expect(store.piEntries("s1", "t2").map(e => e.entry)).toEqual([{ turn: 1 }]);
+      // The records stay in the log; only the derived context drops them.
+      expect(store.eventsSince("s1", 0)).toHaveLength(2);
+    });
+  });
+
   it("appends a batch atomically", async () => {
     await withStore("tx", async store => {
       store.createSession("s1");

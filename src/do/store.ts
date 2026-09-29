@@ -305,15 +305,29 @@ export class Store {
       .toArray();
   }
 
-  /** Raw pi entries, in order — the only input to rebuilding a session's context. */
-  piEntries(sessionId: string): Array<{ seq: number; entry: unknown }> {
-    return this.#sql
-      .exec<{ seq: number; payload: string }>(
-        `SELECT seq, payload FROM events
-         WHERE session_id = ? AND kind = 'pi_entry' ORDER BY seq`,
-        sessionId,
-      )
-      .toArray()
-      .map(row => ({ seq: row.seq, entry: JSON.parse(row.payload) as unknown }));
+  /**
+   * Raw pi entries, in order — the only input to rebuilding a session's context.
+   *
+   * `excludeTurn` drops one turn's records. Resuming an interrupted turn needs
+   * this: `AgentSession.prompt()` is the only way to drive the loop and it
+   * appends the user message, so replaying a turn whose message is already in
+   * the log would show it twice. The records stay in the log, which is what
+   * clients mirror; the model's context is derived and may legitimately differ.
+   */
+  piEntries(sessionId: string, excludeTurn?: string): Array<{ seq: number; entry: unknown }> {
+    const rows =
+      excludeTurn === undefined
+        ? this.#sql.exec<{ seq: number; payload: string }>(
+            `SELECT seq, payload FROM events
+             WHERE session_id = ? AND kind = 'pi_entry' ORDER BY seq`,
+            sessionId,
+          )
+        : this.#sql.exec<{ seq: number; payload: string }>(
+            `SELECT seq, payload FROM events
+             WHERE session_id = ? AND kind = 'pi_entry' AND turn_id <> ? ORDER BY seq`,
+            sessionId,
+            excludeTurn,
+          );
+    return rows.toArray().map(row => ({ seq: row.seq, entry: JSON.parse(row.payload) as unknown }));
   }
 }
