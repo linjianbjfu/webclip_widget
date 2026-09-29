@@ -29,6 +29,7 @@ import {
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
 
+import { withWorkspaceShellBrief } from "./bash-brief.ts";
 import { createBriefProvider } from "./brief.ts";
 import { createPreviewTool } from "./preview.ts";
 import { createWorkspaceOperations } from "./operations.ts";
@@ -101,7 +102,9 @@ export async function openSession(input: OpenSessionInput): Promise<OpenedSessio
     // Offered only when the binding exists: a tool the model can call but
     // that always fails is worse than one it never sees.
     ...(input.browser ? [createPreviewTool(input.browser, input.fs)] : []),
-    createBashToolDefinition(WORKSPACE_ROOT, { operations: operations.bash }),
+    withWorkspaceShellBrief(
+      createBashToolDefinition(WORKSPACE_ROOT, { operations: operations.bash }),
+    ),
     createReadToolDefinition(WORKSPACE_ROOT, { operations: operations.read }),
     createEditToolDefinition(WORKSPACE_ROOT, { operations: operations.edit }),
     createWriteToolDefinition(WORKSPACE_ROOT, { operations: operations.write }),

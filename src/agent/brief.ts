@@ -34,9 +34,11 @@ const OPEN = "<agent_brief>";
 const CLOSE = "</agent_brief>";
 
 /**
- * A minimal brief. It states the environment's hard facts — where files live,
- * which commands exist, how the result is verified — and nothing about how to
- * do the extraction well. Replacing this is its own piece of work.
+ * A minimal brief. It states the task's hard facts — where files live, what to
+ * write, how the result is verified — and nothing about how to do the
+ * extraction well. What a tool costs and which commands it has belongs to that
+ * tool's own description, where the model reads it as it writes the call; see
+ * [bash-brief.ts](./bash-brief.ts). Replacing this is its own piece of work.
  */
 export function createBriefProvider(): BriefProvider {
   return {
@@ -49,15 +51,6 @@ export function createBriefProvider(): BriefProvider {
         `The page source is at ${workspaceRoot}source.html and a screenshot is at ${workspaceRoot}screenshot.png.`,
         `Write exactly two files: ${outDir}/widget.html and ${outDir}/extra.js.`,
         `Only files under ${outDir} are delivered to the user.`,
-        "",
-        "The shell has grep, rg, find, sed, awk, jq, cut, tr and the usual text tools.",
-        "It has no node, npm, python or js-exec: transform text with those tools instead.",
-        "Its regular expressions are RE2 — backreferences and lookaround are unsupported.",
-        "RE2 has no counters: `{0,N}` compiles into N copies of whatever it repeats.",
-        "So a leading `.{0,N}` walks a huge automaton from every position in the file",
-        "— on a large page that is tens of seconds, while `.*` is one state and is free.",
-        "Put the literal first, as in `grep -o 'PRICE.{0,300}'`. To read what precedes a",
-        "literal, use awk index() and substr(); never a leading `.{0,N}`.",
         "",
         "extra.js runs in a browser, not Node. Call preview_widget to render the widget,",
         "collect syntax and runtime errors, and get a screenshot back.",
