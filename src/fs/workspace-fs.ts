@@ -209,10 +209,11 @@ export class WorkspaceFs {
     return new TextDecoder().decode(bytes);
   }
 
-  /** latin1-shaped bytes: one char per byte, for callers that pipe bytes onward unchanged. */
-  async readFileBytes(path: string): Promise<string> {
-    return this.readFile(path, "binary");
-  }
+  // `readFileBytes` is deliberately absent. It returns just-bash's branded
+  // `ByteString`, which the package does not re-export from the entry this
+  // build uses, and the interface marks the method optional: callers route
+  // through a helper that falls back to `readFileBuffer`, which is the same
+  // bytes by a documented path.
 
   async exists(path: string): Promise<boolean> {
     return this.#row(this.#resolve(normalizePath(path))) !== undefined;
