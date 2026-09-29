@@ -11,6 +11,7 @@
  *                                       run a turn, optionally uploading the
  *                                       captured page and screenshot
  *   webclip events <session> [since]    replay and follow
+ *   webclip timeline <session>          where a turn's time went
  *   webclip abort <session>
  *   webclip rm <session>
  *   webclip chat [session]              conversational REPL; creates a
@@ -24,6 +25,7 @@ import { createInterface } from "node:readline/promises";
 import { Client, cursors } from "./client.mjs";
 import { runChecks } from "./checks.mjs";
 import { followRenderer, render } from "./render.mjs";
+import { formatTimeline, timeline } from "./timeline.mjs";
 
 /** The shape `new` hands back, so a message is never mistaken for a target. */
 function isSessionId(value) {
@@ -105,6 +107,15 @@ async function main() {
       await client.events(sessionId, Number(since ?? 0), { onFrame: followRenderer() });
       return;
     }
+    case "timeline": {
+      const { status, frames } = await client.events(args[0], 0);
+      if (status !== 200) {
+        console.error(`${status}`);
+        process.exit(1);
+      }
+      console.log(formatTimeline(timeline(frames)));
+      return;
+    }
     case "abort": {
       console.log(JSON.stringify((await client.abort(args[0])).body));
       return;
@@ -118,7 +129,7 @@ async function main() {
       return;
     }
     default:
-      console.error("usage: webclip <sessions|new|prompt|chat|events|abort|rm|check>");
+      console.error("usage: webclip <sessions|new|prompt|chat|events|timeline|abort|rm|check>");
       process.exit(2);
   }
 }

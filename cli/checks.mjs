@@ -17,6 +17,7 @@ import { join } from "node:path";
 
 import { assertMonotonic, assertNoGapOrRepeat, Client, cursors, ProtocolError } from "./client.mjs";
 import { replayLine, streamProse } from "./render.mjs";
+import { timeline } from "./timeline.mjs";
 
 const WRITE_PROMPT =
   "Use the write tool to create out/note.txt containing exactly: ok. Then reply DONE and stop.";
@@ -305,6 +306,27 @@ export async function runChecks(config) {
         }
       }
       return `${lines.length} line(s) rendered`;
+    }),
+  );
+
+  await reporter.run("a turn's time is attributed to model and tools", () =>
+    withSession(client, async sessionId => {
+      await client.prompt({ sessionId, text: "Run `echo hi` with bash, then reply OK." });
+
+      // The report is derived from entry timestamps alone, so it exists only
+      // as long as every entry carries one and the order of calls and results
+      // holds. Both are protocol facts, and both break silently.
+      const { frames } = await client.events(sessionId, 0);
+      const report = timeline(frames);
+      if (report.model.count === 0) throw new ProtocolError("no model time attributed");
+      if (report.tool.count === 0) throw new ProtocolError("no tool time attributed");
+      const named = report.steps.find(step => step.kind === "tool" && step.label === "bash");
+      if (!named) {
+        const seen = report.steps.map(step => `${step.kind}:${step.label}`).join(", ");
+        throw new ProtocolError(`no bash step was attributed; saw ${seen}`);
+      }
+      if (report.total <= 0) throw new ProtocolError("the turn took no measurable time");
+      return `${(report.total / 1000).toFixed(1)}s over ${report.steps.length} step(s)`;
     }),
   );
 

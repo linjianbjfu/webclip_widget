@@ -80,6 +80,7 @@ echo "你好啊" | npm run cli -- chat     # 一句话就说完，会话自动�
 npm run cli -- chat                    # 连续对话，每行一轮
 npm run cli -- chat <session>          # 接着已有会话聊
 npm run cli -- events <session> 0      # 回放并跟随
+npm run cli -- timeline <session>      # 这一轮的时间花在哪
 npm run cli -- sessions                # 列表
 npm run cli -- abort <session>
 ```
