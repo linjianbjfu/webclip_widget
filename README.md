@@ -138,7 +138,16 @@ WEBCLIP_SLOW=1 npm run e2e   # 额外跑保活用例，需 2–5 分钟
 
 保活用例默认跳过，因为它需要一轮超过 70 秒的模型时间。它会**自证跑过了死线**：turn 若短于 70 秒即判失败，因为那个时长本就不会触发驱逐，通过也说明不了任何事。
 
-`preview_widget` 在本地需要 miniflare 下载 Chromium。下载残缺时启动报 `spawn Unknown system error -88`——macOS 的 errno 88 是 `EBADMACHO`（Mach-O 格式损坏），不是架构不匹配（那是 86）。miniflare 会在启动失败后丢弃并重新下载；若反复失败，该能力只能在部署后验证。工具本身把启动失败收敛成一行返回给模型，这一轮不会中断。
+`preview_widget` 在本地需要 miniflare 下载 Chrome for Testing 到 `~/Library/Caches/.wrangler/chrome/`，约 400MB、2000 多个文件。**下载期间杀掉 `wrangler dev` 会留下一个只解压了几个文件的残骸**：`Contents/MacOS/` 下那个 151KB 的启动器是合法 Mach-O，但它要动态链接的 `Contents/Frameworks/` 不存在，于是启动报 `spawn Unknown system error -88`——macOS 的 errno 88 是 `EBADMACHO`（Mach-O 格式损坏），不是架构不匹配（那是 86）。
+
+判断方法是数文件，不是看报错：
+
+```bash
+find ~/Library/Caches/.wrangler/chrome -type f | wc -l    # 完整安装 2000+，残骸个位数
+rm -rf ~/Library/Caches/.wrangler/chrome                  # 删掉后下次启动重新下载，别中途打断
+```
+
+工具本身把启动失败收敛成一行返回给模型，这一轮不会中断。
 
 ## 部署
 
