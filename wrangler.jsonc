@@ -17,10 +17,9 @@
   "vars": {
     "LLM_PROVIDER": "copilot",
     "DEFAULT_MODEL": "gpt-5.6-sol",
-    "MAX_CONCURRENT_TURNS": "3",
-    // LLM_BASE_URL and LLM_API_KEY come from .dev.vars locally and from
-    // `wrangler secret put` in a deployment; never from this file.
-    "LLM_BASE_URL": "",
-    "LLM_API_KEY": ""
+    "MAX_CONCURRENT_TURNS": "3"
+    // LLM_BASE_URL, LLM_API_KEY and AUTH_TOKEN are secrets: they come from
+    // .dev.vars locally and from `wrangler secret put` in a deployment.
+    // Declaring them here as empty vars would override the secrets.
   }
 }
