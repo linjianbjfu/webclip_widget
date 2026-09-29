@@ -1,0 +1,22 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "webclip-widget",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "define": {
+    // pi 的 config.ts 在模块作用域调 fileURLToPath(import.meta.url)，
+    // 打包后为 undefined，Worker 一启动就崩。该值只用于 CLI 自更新路径，运行时用不到。
+    "import.meta.url": "\"file:///worker/index.js\""
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "AGENT", "class_name": "UserAgentDO" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["UserAgentDO"] }],
+  "browser": { "binding": "BROWSER" },
+  "vars": {
+    "LLM_PROVIDER": "copilot",
+    "DEFAULT_MODEL": "gpt-5.6-sol",
+    "MAX_CONCURRENT_TURNS": "3"
+  }
+}
