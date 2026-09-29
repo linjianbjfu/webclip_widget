@@ -14,14 +14,16 @@
  *   webclip abort <session>
  *   webclip rm <session>
  *   webclip chat [session]              conversational REPL; creates a
- *                                       session when none is given
+ *                                       session when none is given. Inside,
+ *                                       /help lists the slash commands.
  *   webclip check                       run the end-to-end suite
  */
 
 import { createInterface } from "node:readline/promises";
 
-import { Client } from "./client.mjs";
+import { Client, cursors } from "./client.mjs";
 import { runChecks } from "./checks.mjs";
+import { followRenderer, render } from "./render.mjs";
 
 function config() {
   const baseUrl = process.env.WEBCLIP_URL;
@@ -31,41 +33,6 @@ function config() {
     process.exit(2);
   }
   return { baseUrl, token, userId: process.env.WEBCLIP_USER ?? "cli" };
-}
-
-/** Render a frame for a human. The interactive driver is tolerant by design. */
-function render(frame) {
-  const seq = frame.id ? `#${frame.id} ` : "   ";
-  switch (frame.event) {
-    case "stream": {
-      const events = frame.data?.events ?? [];
-      const text = events.map(e => e.delta ?? e.text ?? "").join("");
-      if (text) process.stdout.write(text);
-      return;
-    }
-    case "tool_start":
-      console.log(`\n${seq}→ ${frame.data.name} ${JSON.stringify(frame.data.args ?? {}).slice(0, 120)}`);
-      return;
-    case "tool_end":
-      console.log(`${seq}← ${frame.data.name} ${frame.data.isError ? "ERROR" : "ok"}`);
-      return;
-    case "out_file":
-      console.log(`${seq}📄 ${frame.data.path} ${frame.data.bytes}B`);
-      return;
-    case "turn_end": {
-      const out = (frame.data.out ?? []).map(f => `${f.path} (${f.bytes}B)`).join(", ");
-      console.log(`\n${seq}turn ${frame.data.reason}${out ? ` — ${out}` : ""}`);
-      return;
-    }
-    case "error":
-      console.log(`\n${seq}error ${frame.data.code}: ${frame.data.message}`);
-      return;
-    case "stream_end":
-      console.log(`${seq}stream closed (busy=${frame.data.sessionBusy})`);
-      return;
-    default:
-      console.log(`${seq}${frame.event}`);
-  }
 }
 
 async function main() {
@@ -114,7 +81,7 @@ async function main() {
     }
     case "events": {
       const [sessionId, since] = args;
-      await client.events(sessionId, Number(since ?? 0), { onFrame: render });
+      await client.events(sessionId, Number(since ?? 0), { onFrame: followRenderer() });
       return;
     }
     case "abort": {
@@ -136,6 +103,157 @@ async function main() {
 }
 
 /**
+ * Slash commands available inside `chat`.
+ *
+ * This table is the only list. `/help` renders from it, so a command cannot
+ * exist undocumented or be documented without existing. Each `run` receives
+ * the live session state and may replace any part of it.
+ */
+const COMMANDS = [
+  {
+    name: "help",
+    summary: "list these commands",
+    run: () => {
+      const width = Math.max(...COMMANDS.map(c => usage(c).length));
+      for (const c of COMMANDS) console.log(`  /${usage(c).padEnd(width)}  ${c.summary}`);
+      console.log("\n  anything else is sent as a message; //text sends a literal leading slash");
+    },
+  },
+  {
+    name: "list",
+    aliases: ["sessions", "ls"],
+    summary: "every session, current one marked",
+    run: async ({ state, client }) => {
+      const { body } = await client.listSessions();
+      const sessions = body.sessions ?? [];
+      if (sessions.length === 0) return console.log("  (none)");
+      for (const s of sessions) {
+        const mark = s.id === state.sessionId ? "*" : " ";
+        console.log(`${mark} ${s.id}  ${s.busy ? "busy" : "idle"}  ${s.title ?? "(untitled)"}`);
+      }
+    },
+  },
+  {
+    name: "new",
+    args: "[title]",
+    summary: "create a session and move to it",
+    run: async ({ args, state, client }) => {
+      const { body } = await client.createSession(args.join(" ") || "chat");
+      enter(state, body.sessionId);
+    },
+  },
+  {
+    name: "switch",
+    args: "<session>",
+    summary: "continue an existing session",
+    run: ({ args, state }) => {
+      if (!args[0]) return console.error("  /switch needs a session id — /list shows them");
+      enter(state, args[0]);
+    },
+  },
+  {
+    name: "session",
+    summary: "current session, cursor and staged files",
+    run: ({ state }) => {
+      console.log(`  session ${state.sessionId}`);
+      console.log(`  cursor  ${state.since}`);
+      console.log(`  files   ${state.files.length ? state.files.join(", ") : "(none)"}`);
+      console.log(`  gzip    ${state.gzip ? "on" : "off"}`);
+    },
+  },
+  {
+    name: "history",
+    args: "[since]",
+    summary: "replay this session's log",
+    run: async ({ args, state, client }) => {
+      const from = Number(args[0] ?? 0) || 0;
+      const { status, frames } = await client.events(state.sessionId, from, {
+        onFrame: followRenderer(),
+      });
+      if (status !== 200) return console.error(`  ${status}`);
+      const last = cursors(frames).at(-1);
+      if (last !== undefined) state.since = last;
+    },
+  },
+  {
+    name: "file",
+    args: "[path|clear]",
+    summary: "stage a file for the next message",
+    run: ({ args, state }) => {
+      if (args.length === 0) return console.log(`  ${state.files.join(", ") || "(none staged)"}`);
+      if (args[0] === "clear") {
+        state.files = [];
+        return console.log("  cleared");
+      }
+      state.files.push(...args);
+      console.log(`  staged ${args.join(", ")}`);
+    },
+  },
+  {
+    name: "gzip",
+    summary: "toggle gzip for staged uploads",
+    run: ({ state }) => {
+      state.gzip = !state.gzip;
+      console.log(`  gzip ${state.gzip ? "on" : "off"}`);
+    },
+  },
+  {
+    name: "abort",
+    summary: "stop the running turn",
+    run: async ({ state, client }) => {
+      console.log(`  ${JSON.stringify((await client.abort(state.sessionId)).body)}`);
+    },
+  },
+  {
+    name: "rm",
+    args: "[session]",
+    summary: "delete a session, current one by default",
+    run: async ({ args, state, client }) => {
+      const target = args[0] ?? state.sessionId;
+      console.log(`  ${(await client.deleteSession(target)).status}`);
+      if (target !== state.sessionId) return;
+      // The REPL cannot keep pointing at a session that no longer exists:
+      // every later message would fail. Open a fresh one instead.
+      const { body } = await client.createSession("chat");
+      enter(state, body.sessionId);
+    },
+  },
+  {
+    name: "quit",
+    aliases: ["exit", "q"],
+    summary: "leave",
+    run: ({ state }) => {
+      state.done = true;
+    },
+  },
+];
+
+function usage(command) {
+  return command.args ? `${command.name} ${command.args}` : command.name;
+}
+
+/**
+ * Point the REPL at a session.
+ *
+ * The cursor resets because a sequence number is only meaningful within the
+ * log that issued it; carrying one across sessions would ask the server to
+ * resume from a position in a different log.
+ */
+function enter(state, sessionId) {
+  state.sessionId = sessionId;
+  state.since = 0;
+  console.log(`  session ${sessionId}`);
+}
+
+/** Complete slash commands; ordinary prose gets no suggestions. */
+function completer(line) {
+  if (!line.startsWith("/")) return [[], line];
+  const names = COMMANDS.flatMap(c => [c.name, ...(c.aliases ?? [])]).map(n => `/${n}`);
+  const hits = names.filter(n => n.startsWith(line));
+  return [hits.length > 0 ? hits : names, line];
+}
+
+/**
  * A conversational loop over one session.
  *
  * Each line is its own turn — the server has no notion of a partial message —
@@ -150,21 +268,24 @@ async function main() {
  * silently drops everything after the first message.
  */
 async function chat(client, existing) {
-  let sessionId = existing;
-  if (!sessionId) {
+  const state = { sessionId: existing, since: 0, files: [], gzip: false, done: false };
+  if (!state.sessionId) {
     const { body } = await client.createSession("chat");
-    sessionId = body.sessionId;
-    console.log(`session ${sessionId}`);
+    state.sessionId = body.sessionId;
+    console.log(`session ${state.sessionId}`);
   }
 
-  let since = 0;
-  const send = async line => {
+  const send = async text => {
+    const files = state.files;
+    state.files = []; // staged files belong to one message, not to the session
     const result = await client.prompt({
-      sessionId,
-      text: line,
-      since,
+      sessionId: state.sessionId,
+      text,
+      files,
+      gzip: state.gzip,
+      since: state.since,
       onFrame: frame => {
-        if (frame.id !== undefined) since = Number(frame.id);
+        if (frame.id !== undefined) state.since = Number(frame.id);
         render(frame);
       },
     });
@@ -172,31 +293,40 @@ async function chat(client, existing) {
     console.log();
   };
 
+  /** Dispatch one line: a command, an escaped literal, or a message. */
+  const handle = async line => {
+    if (line.startsWith("//")) return send(line.slice(1));
+    if (!line.startsWith("/")) return send(line);
+    const [word, ...args] = line.slice(1).split(/\s+/);
+    const command = COMMANDS.find(c => c.name === word || c.aliases?.includes(word));
+    if (!command) return console.error(`  unknown command /${word} — /help lists them`);
+    await command.run({ args, state, client });
+  };
+
   if (!process.stdin.isTTY) {
     const chunks = [];
     for await (const chunk of process.stdin) chunks.push(chunk);
     for (const line of Buffer.concat(chunks).toString("utf8").split("\n")) {
       const text = line.trim();
-      if (text.length === 0 || text === "/quit" || text === "/exit") continue;
-      console.log(`> ${text}`);
-      await send(text);
+      if (text.length === 0) continue;
+      if (!text.startsWith("/")) console.log(`> ${text}`);
+      await handle(text);
+      if (state.done) return;
     }
     return;
   }
 
-  console.log("type a message, or /quit to leave. Ctrl-C also works.\n");
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  console.log("/help lists the commands. Ctrl-C also leaves.\n");
+  const rl = createInterface({ input: process.stdin, output: process.stdout, completer });
   try {
-    for (;;) {
+    while (!state.done) {
       let line;
       try {
         line = (await rl.question("> ")).trim();
       } catch {
         return; // stream closed under an interactive session
       }
-      if (line.length === 0) continue;
-      if (line === "/quit" || line === "/exit") return;
-      await send(line);
+      if (line.length > 0) await handle(line);
     }
   } finally {
     rl.close();

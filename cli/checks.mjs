@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { assertMonotonic, assertNoGapOrRepeat, Client, cursors, ProtocolError } from "./client.mjs";
+import { replayLine } from "./render.mjs";
 
 const WRITE_PROMPT =
   "Use the write tool to create out/note.txt containing exactly: ok. Then reply DONE and stop.";
@@ -238,6 +239,36 @@ export async function runChecks(config) {
         );
       }
       return `recalled ${secret}`;
+    }),
+  );
+
+  await reporter.run("replayed history names the tool that ran", () =>
+    withSession(client, async sessionId => {
+      await client.prompt({
+        sessionId,
+        text: "Run `echo marker-7 > /out/marker.txt` with bash, then reply OK.",
+      });
+
+      // Replay reads the log the way a returning client does. The block names
+      // are pi's, not this repo's, so only real output proves they are right:
+      // a renderer matching on the wrong name drops whole records in silence.
+      const { frames } = await client.events(sessionId, 0);
+      const lines = [];
+      for (const frame of frames) {
+        const entry = frame.data;
+        if (entry?.type !== "message") continue;
+        for (const block of entry.message?.content ?? []) {
+          const line = replayLine(entry.message.role, block);
+          if (line !== null) lines.push(line);
+        }
+      }
+      const rendered = lines.join("\n");
+      for (const want of ["> Run `echo", "→ bash"]) {
+        if (!rendered.includes(want)) {
+          throw new ProtocolError(`replay is missing ${JSON.stringify(want)}; got:\n${rendered}`);
+        }
+      }
+      return `${lines.length} line(s) rendered`;
     }),
   );
 
