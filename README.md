@@ -62,9 +62,32 @@ npm run dev
 
 ```bash
 npm run check        # typecheck + 测试 + Agent Note 门禁
-npm test             # 65 条，跑在真实 workerd 里
+npm test             # 71 条，跑在真实 workerd 里
 npm run typecheck
 ```
+
+## CLI
+
+同一个工具承担两件事：端到端检查的夹具，以及 iOS app 就绪之前驱动服务端的手段。
+
+```bash
+export WEBCLIP_URL=https://…  WEBCLIP_TOKEN=…  WEBCLIP_USER=me
+
+npm run cli -- new "某个页面"          # 建会话
+npm run cli -- prompt <session> "…"    # 跑一轮，流式打印
+npm run cli -- events <session> 0      # 回放并跟随
+npm run cli -- sessions                # 列表
+npm run cli -- abort <session>
+```
+
+```bash
+npm run e2e                  # 端到端检查，约 20 秒
+WEBCLIP_SLOW=1 npm run e2e   # 额外跑保活用例，需 2–5 分钟
+```
+
+`e2e` 打的是**真实服务与真实模型**，断言全部关于协议行为——断线重连有无缺口、重放是否开新轮、回放是否携带产物内容——**从不断言模型说了什么**，那不可复现。
+
+保活用例默认跳过，因为它需要一轮超过 70 秒的模型时间。它会**自证跑过了死线**：turn 若短于 70 秒即判失败，因为那个时长本就不会触发驱逐，通过也说明不了任何事。
 
 `preview_widget` 在本地需要 miniflare 下载 Chromium。**本机若是 Apple Silicon 可能拿到架构不匹配的二进制**（`spawn Unknown system error -88`），该能力只能在部署后验证。
 

@@ -16,7 +16,9 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "check": "npm run typecheck && npm run test && npm run verify-notes",
-    "types": "wrangler types"
+    "types": "wrangler types",
+    "e2e": "node cli/index.mjs check",
+    "cli": "node cli/index.mjs"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "^1.2.1",

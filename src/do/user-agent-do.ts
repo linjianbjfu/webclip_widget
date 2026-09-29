@@ -37,6 +37,11 @@ export class UserAgentDO extends DurableObject<Env> {
     return this.#sql;
   }
 
+  /** Test seam: lets a test set up turn state without going through HTTP. */
+  get storeForTest(): Store {
+    return this.#store;
+  }
+
   workspace(sessionId: string): WorkspaceFs {
     let fs = this.#workspaces.get(sessionId);
     if (!fs) {
@@ -55,17 +60,23 @@ export class UserAgentDO extends DurableObject<Env> {
       store: this.#store,
       hub: this.#hub,
       workspace: id => this.workspace(id),
-      startTurn: this.#startTurn,
+      startTurn: input => this.turnRunner(input),
       newSessionId: () => crypto.randomUUID(),
       scheduleKeepalive: () => void this.#scheduleKeepalive(),
     };
   }
 
   /**
-   * Turn execution is injected rather than imported so the HTTP surface stays
-   * free of pi: the Workers test pool cannot load pi's package root.
+   * How a turn is executed.
+   *
+   * Replaceable because the real runner imports pi's package root, which the
+   * Workers test pool resolves to an extension loader needing `node:process`
+   * and then cannot run. Everything around the runner — the alarm's keepalive
+   * and recovery branches, the event log, the subscriber hub — is testable
+   * only if the runner itself can be swapped out. The import stays dynamic so
+   * pi is never pulled in merely by constructing the object.
    */
-  #startTurn: StartTurn = async ({ sessionId, turnId }) => {
+  turnRunner: StartTurn = async ({ sessionId, turnId }) => {
     const { runTurn } = await import("../agent/run-turn.ts");
     await runTurn({
       env: this.env,
@@ -115,7 +126,7 @@ export class UserAgentDO extends DurableObject<Env> {
 
     for (const { sessionId, turnId } of decision.resume) {
       this.#store.countRecovery(sessionId, turnId);
-      void this.#startTurn({ sessionId, turnId, text: "" });
+      void this.turnRunner({ sessionId, turnId, text: "" });
     }
 
     this.#store.pruneTurns(TURN_RETENTION_MS);
