@@ -1,0 +1,50 @@
+/**
+ * Live provider-compatibility checks.
+ *
+ * Skipped unless LLM_API_KEY is configured. These assert that the request
+ * shape reaches the gateway and its response parses — never what the model
+ * says, which is not reproducible and would make the suite flaky.
+ *
+ * These do not run under the Workers test pool: importing pi's package root
+ * drags in its extension loader, which needs `node:process`. Wrangler's own
+ * bundler prunes that path, so the same import works in `wrangler dev` and in
+ * a deployment — verified by driving `/__probe/model` against the gateway.
+ * Until the pool resolves the package the same way, provider compatibility is
+ * covered from the deployed Worker rather than from here.
+ */
+
+import { env } from "cloudflare:test";
+import { describe, expect, it } from "vitest";
+
+import { createModelRuntime, resolveProvider } from "../src/agent/model.ts";
+
+const configured = Boolean(env.LLM_API_KEY && env.LLM_BASE_URL);
+
+describe.skipIf(!configured)("provider compatibility", () => {
+  it("registers the provider and exposes the default model", async () => {
+    const config = resolveProvider(env);
+    const runtime = await createModelRuntime(config);
+    const model = runtime.getModel(config.id, config.defaultModel);
+    expect(model).toBeDefined();
+    expect(model?.id).toBe(config.defaultModel);
+  });
+
+  it("streams a completion and reports usage", async () => {
+    const config = resolveProvider(env);
+    const runtime = await createModelRuntime(config);
+    const model = runtime.getModel(config.id, config.defaultModel)!;
+
+    const message = await runtime.complete(model, {
+      messages: [{ role: "user", content: [{ type: "text", text: "Reply with the single word OK." }] }],
+    });
+
+    const text = message.content
+      .filter((part): part is { type: "text"; text: string } => part.type === "text")
+      .map(part => part.text)
+      .join("");
+    // Assert the shape, not the wording.
+    expect(text.length).toBeGreaterThan(0);
+    expect(message.usage.input).toBeGreaterThan(0);
+    expect(message.stopReason).toBeDefined();
+  }, 60_000);
+});
