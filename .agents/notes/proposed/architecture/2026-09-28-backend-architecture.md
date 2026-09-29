@@ -88,6 +88,7 @@ UserAgentDO（idFromName(userId)）
 | 落盘游标初值 | `history.length > 0 ? getEntries().length : 0` | 每次打开会话 pi 都会写入 `model_change` / `thinking_level_change` 两条引导条目。新会话必须落盘它们，恢复的会话必须跳过。恒为 `length` 会导致恢复时读不到模型与思考等级并静默回退；恒为 0 会每恢复一次重复追加两条 |
 | 扩展 | `noExtensions: true` | jiti 动态加载 TS 在 Workers 不可用 |
 | 模型接入 | `ModelRuntime.create({ credentials: InMemoryCredentialStore, modelsPath: null })`，只注册当前选中的 provider | 全内存，密钥留在 Workers Secret；未使用的 provider 无需配置 key |
+| 事务 | 用 `ctx.storage.transactionSync()`，**不要 SQL 的 `BEGIN`** | 平台直接拒绝裸 `BEGIN`/`SAVEPOINT`："please use the state.storage.transaction() … APIs instead"。JavaScript API 会在异常时自动回滚，并与 Durable Object 的自动写合并正确交互，而裸 `BEGIN` 会绕过后者 |
 | 工具环境 | 只转发 `PI_*` 前缀的变量 | `nodejs_compat` 把 secrets 一并填进 `process.env`，pi 的 bash 工具用 `getShellEnv()` 构造子进程环境——原样转发等于把网关 key 交出去 |
 
 #### 系统提示词留作独立工作
