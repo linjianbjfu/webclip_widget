@@ -74,7 +74,8 @@ npm run typecheck
 export WEBCLIP_URL=https://…  WEBCLIP_TOKEN=…  WEBCLIP_USER=me
 
 npm run cli -- new "某个页面"          # 建会话
-npm run cli -- prompt <session> "…"    # 跑一轮，流式打印
+npm run cli -- prompt "…"              # 跑一轮，流式打印；会话自动建
+npm run cli -- prompt <session> "…"    # 接着某个会话跑
 echo "你好啊" | npm run cli -- chat     # 一句话就说完，会话自动建
 npm run cli -- chat                    # 连续对话，每行一轮
 npm run cli -- chat <session>          # 接着已有会话聊
@@ -105,12 +106,14 @@ npm run cli -- abort <session>
 **首轮带上网页与截图**：
 
 ```bash
-npm run cli -- prompt <session> \
+npm run cli -- prompt \
   --file ./source.html --file ./screenshot.png --gzip \
   "读 source.html，把报价做成 widget"
 ```
 
-`--file` 可重复，文件写入工作区根目录：路径中的目录部分会被剥掉，`./a/b/source.html` 落成 `/source.html`，所以提示词里直接按文件名引用。`--gzip` 只压缩文本类扩展名——服务端解压后再落盘，因此 `grep` 看到的是真实字节；PNG 之类不会被再压一遍。
+会话可省：不给就新建一个并打印它的 id。首个位置上的裸 UUID 当作会话，`--session <id>` 是它的显式写法。
+
+`--file` 可给零个、一个或多个，文件写入工作区根目录：路径中的目录部分会被剥掉，`./a/b/source.html` 落成 `/source.html`，所以提示词里直接按文件名引用。`--gzip` 只压缩文本类扩展名——服务端解压后再落盘，因此 `grep` 看到的是真实字节；PNG 之类不会被再压一遍。
 
 ### 指向本地
 

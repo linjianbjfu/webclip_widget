@@ -25,6 +25,11 @@ import { Client, cursors } from "./client.mjs";
 import { runChecks } from "./checks.mjs";
 import { followRenderer, render } from "./render.mjs";
 
+/** The shape `new` hands back, so a message is never mistaken for a target. */
+function isSessionId(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value ?? "");
+}
+
 function config() {
   const baseUrl = process.env.WEBCLIP_URL;
   const token = process.env.WEBCLIP_TOKEN;
@@ -57,21 +62,30 @@ async function main() {
       return;
     }
     case "prompt": {
-      const [sessionId, ...rest] = args;
       const files = [];
-      let gzip = false;
       const words = [];
-      for (let i = 0; i < rest.length; i++) {
-        if (rest[i] === "--file") files.push(rest[++i]);
-        else if (rest[i] === "--gzip") gzip = true;
-        else words.push(rest[i]);
+      let gzip = false;
+      let sessionId;
+      for (let i = 0; i < args.length; i++) {
+        if (args[i] === "--file") files.push(args[++i]);
+        else if (args[i] === "--gzip") gzip = true;
+        else if (args[i] === "--session") sessionId = args[++i];
+        // A bare session id is accepted in the first position only, and only
+        // while it cannot be part of the message: a UUID is what `new` hands
+        // back, so reading one there turns no plausible message into a target.
+        else if (sessionId === undefined && words.length === 0 && isSessionId(args[i])) {
+          sessionId = args[i];
+        } else words.push(args[i]);
       }
-      if (!sessionId || words.length === 0) {
-        // Without this the session id absorbs the message and the server
-        // answers 404 for a session nobody meant to name.
-        console.error('usage: webclip prompt <session> "<message>" [--file PATH]... [--gzip]');
-        console.error("  a session id comes from `webclip new`; `webclip chat` makes one for you");
+      if (words.length === 0) {
+        console.error('usage: webclip prompt [session] "<message>" [--file PATH]... [--gzip]');
+        console.error("  without a session one is created; --file may be repeated or omitted");
         process.exit(2);
+      }
+      if (sessionId === undefined) {
+        const { body } = await client.createSession(words.join(" ").slice(0, 60));
+        sessionId = body.sessionId;
+        console.log(`session ${sessionId}`);
       }
       const result = await client.prompt({
         sessionId,
