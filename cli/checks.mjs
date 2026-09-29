@@ -214,6 +214,33 @@ export async function runChecks(config) {
     }),
   );
 
+  console.log("\nconversation");
+  await reporter.run("a later turn sees the earlier ones", () =>
+    withSession(client, async sessionId => {
+      // A value the model can only know from the previous turn; nothing in
+      // the prompt or the workspace carries it.
+      const secret = Math.floor(Math.random() * 9000) + 1000;
+      const first = await client.prompt({
+        sessionId,
+        text: `Remember this number: ${secret}. Reply with just OK.`,
+      });
+      if (first.status !== 200) throw new ProtocolError(`first turn returned ${first.status}`);
+
+      const second = await client.prompt({
+        sessionId,
+        text: "What number did I ask you to remember? Reply with just the digits.",
+        since: cursors(first.frames).at(-1) ?? 0,
+      });
+      const said = JSON.stringify(second.frames);
+      if (!said.includes(String(secret))) {
+        throw new ProtocolError(
+          `the second turn never repeated ${secret}; context is not reaching the model`,
+        );
+      }
+      return `recalled ${secret}`;
+    }),
+  );
+
   console.log("\nupload");
   await reporter.run("a gzipped page reaches the workspace decoded", () =>
     withSession(client, async sessionId => {

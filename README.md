@@ -75,6 +75,8 @@ export WEBCLIP_URL=https://…  WEBCLIP_TOKEN=…  WEBCLIP_USER=me
 
 npm run cli -- new "某个页面"          # 建会话
 npm run cli -- prompt <session> "…"    # 跑一轮，流式打印
+npm run cli -- chat                    # 连续对话，每行一轮
+npm run cli -- chat <session>          # 接着已有会话聊
 npm run cli -- events <session> 0      # 回放并跟随
 npm run cli -- sessions                # 列表
 npm run cli -- abort <session>

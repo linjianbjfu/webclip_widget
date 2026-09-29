@@ -122,8 +122,16 @@ export async function openSession(input: OpenSessionInput): Promise<OpenedSessio
       outDir: OUT_DIR,
     }),
     customTools,
-    ...(restored ? { context: restored } : {}),
   } as Parameters<typeof createAgentSession>[0]);
+
+  // Restored messages are assigned after construction: `createAgentSession`
+  // takes no context parameter, so passing one is silently ignored and every
+  // turn starts blank — the model then cannot see anything said before it.
+  if (restored) {
+    (session as unknown as { agent: { state: { messages: unknown[] } } }).agent.state.messages = [
+      ...restored.messages,
+    ];
+  }
 
   return {
     session,

@@ -234,6 +234,8 @@ SessionContext { messages, thinkingLevel, model, activeToolNames }
 
 三点需要注意：
 
+**恢复的消息在会话构造之后赋给 `session.agent.state.messages`。** `createAgentSession` 不接受上下文参数，传一个进去既不报错也不生效——每一轮都从空白开始，模型看不到此前说过的任何话。症状不是错误而是失忆，且只有在第二轮引用第一轮的内容时才暴露，因此端到端检查中有一条专门让模型复述上一轮才知道的数字。这与工具接入是同一类错误：把配置交给一个不读它的参数。
+
 **重链是必须的。** pi 的会话是树（`parentId` / `leafId`，支持 fork），而本设计持久化的是线性序列。恢复时须把 `parentId` 按 `seq` 顺序重新串成一条链。v1 没有分支功能，线性重链因此是精确的；**若将来支持 fork，这一步要改**。
 
 **模型与思考等级也来自条目。** `model_change` 与 `thinking_level_change` 是两种 `SessionEntry`，同属 `kind='pi_entry'`。这正是[落盘游标初值](#pi-接入)那条规则的意义所在。
