@@ -11,6 +11,7 @@ import { Hub } from "./hub.ts";
 import { encodeFrame, kindToEvent, streamEndFrame, type Frame } from "./sse.ts";
 import type { EventRow, Store } from "./store.ts";
 import { isValidTurnId, type PromptRequest } from "../protocol.ts";
+import { isMultipart, parseMultipartPrompt, type UploadedFile } from "./upload.ts";
 import type { WorkspaceFs } from "../fs/workspace-fs.ts";
 
 const SSE_HEADERS = {
@@ -96,13 +97,41 @@ function events(url: URL, sessionId: string, deps: HandlerDeps): Response {
 }
 
 async function prompt(request: Request, sessionId: string, deps: HandlerDeps): Promise<Response> {
-  const body = await request.json<PromptRequest>().catch(() => null);
-  if (!body || !isValidTurnId(body.turnId)) {
-    return Response.json({ error: "invalid_turn_id" }, { status: 400 });
-  }
-  const text = body.text?.trim() ?? "";
-  const since = Number.isFinite(body.since) ? Number(body.since) : 0;
+  const multipart = isMultipart(request);
+  let turnId = "";
+  let text = "";
+  let since = 0;
+  let uploaded: UploadedFile[] = [];
 
+  if (multipart) {
+    // Files are written only once the turn is known to be new: a retry of the
+    // same turnId must not re-read a multi-megabyte body, which is where the
+    // idempotency rule earns its keep.
+    const peek = request.clone();
+    const head = await peek.formData().catch(() => null);
+    turnId = String(head?.get("turnId") ?? "");
+    if (!isValidTurnId(turnId)) return Response.json({ error: "invalid_turn_id" }, { status: 400 });
+    if (!deps.store.turn(sessionId, turnId)) {
+      const parsed = await parseMultipartPrompt(request, deps.workspace(sessionId));
+      text = parsed.text.trim();
+      since = parsed.since;
+      uploaded = parsed.files;
+    } else {
+      text = String(head?.get("text") ?? "").trim();
+      since = Number(head?.get("since") ?? "0") || 0;
+    }
+  } else {
+    const body = await request.json<PromptRequest>().catch(() => null);
+    if (!body || !isValidTurnId(body.turnId)) {
+      return Response.json({ error: "invalid_turn_id" }, { status: 400 });
+    }
+    turnId = body.turnId;
+    text = body.text?.trim() ?? "";
+    since = Number.isFinite(body.since) ? Number(body.since) : 0;
+  }
+  void uploaded;
+
+  const body = { turnId, text, since } satisfies PromptRequest;
   const existing = deps.store.turn(sessionId, body.turnId);
   if (!existing && text.length === 0) {
     return Response.json({ error: "empty_prompt" }, { status: 400 });

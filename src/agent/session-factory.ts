@@ -30,6 +30,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import { createBriefProvider } from "./brief.ts";
+import { createPreviewTool } from "./preview.ts";
 import { createWorkspaceOperations } from "./operations.ts";
 import { WORKSPACE_ROOT, OUT_DIR, createShell } from "../shell/bash.ts";
 import type { WorkspaceFs } from "../fs/workspace-fs.ts";
@@ -42,6 +43,8 @@ export interface OpenSessionInput {
   sessionId: string;
   /** Raw pi entries in seq order. Empty for a new session. */
   history: readonly unknown[];
+  /** Browser Run binding. Without it `preview_widget` is not offered at all. */
+  browser?: BrowserRun;
 }
 
 export interface OpenedSession {
@@ -95,6 +98,9 @@ export async function openSession(input: OpenSessionInput): Promise<OpenedSessio
   // `createAgentSession` directly does nothing: the built-ins stay in place and
   // reach for the local filesystem and `child_process.spawn`.
   const customTools = [
+    // Offered only when the binding exists: a tool the model can call but
+    // that always fails is worse than one it never sees.
+    ...(input.browser ? [createPreviewTool(input.browser, input.fs)] : []),
     createBashToolDefinition(WORKSPACE_ROOT, { operations: operations.bash }),
     createReadToolDefinition(WORKSPACE_ROOT, { operations: operations.read }),
     createEditToolDefinition(WORKSPACE_ROOT, { operations: operations.edit }),

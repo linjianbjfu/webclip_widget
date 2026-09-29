@@ -74,6 +74,7 @@ export async function runTurn(input: RunTurnInput): Promise<void> {
       fs,
       sessionId,
       history: store.piEntries(sessionId).map(row => row.entry),
+      ...(env.BROWSER ? { browser: env.BROWSER } : {}),
     });
 
     let persisted = opened.persistedEntries;
