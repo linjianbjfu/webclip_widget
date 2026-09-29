@@ -15,9 +15,18 @@ import { assertMonotonic, assertNoGapOrRepeat, Client, cursors, ProtocolError } 
 
 const WRITE_PROMPT =
   "Use the write tool to create out/note.txt containing exactly: ok. Then reply DONE and stop.";
+/**
+ * One long call rather than several short ones.
+ *
+ * An earlier version asked for three forty-second sleeps and told the model
+ * not to combine them. It complied once and merged them the next run, leaving
+ * the turn at 52s — inside the eviction window, where the check can prove
+ * nothing. A single sleep cannot be merged away, so the duration stops
+ * depending on the model following an instruction.
+ */
 const SLOW_PROMPT =
-  "Run these as three separate bash calls, do not combine them: 'sleep 40; echo one', " +
-  "'sleep 40; echo two', 'sleep 40; echo three'. Then write out/slow.txt containing done. Then reply DONE.";
+  "Make exactly one bash call with command 'sleep 100; echo done' and timeout 180. " +
+  "Then write out/slow.txt containing done. Then reply DONE.";
 
 /** Eviction happens at 70 s without an inbound event; a valid keepalive check must exceed it. */
 const EVICTION_SECONDS = 70;
@@ -208,41 +217,70 @@ export async function runChecks(config) {
       `needs >${EVICTION_SECONDS}s of model time; set WEBCLIP_SLOW=1`,
     );
   } else {
-    await reporter.run(
-      "a turn outlives a vanished client",
-      () =>
-        withSession(client, async sessionId => {
-          const startedAt = Date.now();
-          // Read one frame, then vanish. Nothing inbound reaches the object
-          // afterwards, so only the keepalive alarm can hold it in memory.
-          await client.prompt({ sessionId, text: SLOW_PROMPT, stopAfter: 1 });
-
-          let elapsed = 0;
-          for (;;) {
-            await new Promise(resolve => setTimeout(resolve, 10_000));
-            elapsed = (Date.now() - startedAt) / 1000;
-            const listed = await client.listSessions();
-            const session = listed.body.sessions.find(s => s.id === sessionId);
-            if (session && !session.busy) break;
-            if (elapsed > 300) throw new ProtocolError("turn never finished within 300s");
-          }
-
-          // A turn shorter than the eviction window proves nothing: it would
-          // have survived regardless.
-          if (elapsed <= EVICTION_SECONDS) {
-            throw new ProtocolError(
-              `turn ran ${elapsed.toFixed(1)}s, inside the ${EVICTION_SECONDS}s window — this run cannot show keepalive works`,
-            );
-          }
-          const end = (await client.events(sessionId, 0)).frames.find(f => f.event === "turn_end");
-          if (end?.data.reason !== "completed") {
-            throw new ProtocolError(`turn ended as ${end?.data.reason ?? "nothing"}`);
-          }
-          return `ran ${elapsed.toFixed(1)}s past a ${EVICTION_SECONDS}s window`;
-        }),
-      { slow: true },
-    );
+    await reporter.run("a turn outlives a vanished client", () => keepaliveCheck(client), { slow: true });
   }
 
   return reporter.summary();
+}
+
+/**
+ * Show that a turn survives a client that vanishes.
+ *
+ * The turn must outlast the eviction window for the result to mean anything:
+ * a shorter one would have survived regardless, so a pass on it would be
+ * false. Duration is model-driven, so one short run is retried rather than
+ * reported as a defect; two short runs mean the prompt no longer buys enough
+ * tool time and the check itself needs revisiting.
+ */
+async function keepaliveCheck(client) {
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const { body: created } = await client.createSession("keepalive");
+    const sessionId = created.sessionId;
+    try {
+      const elapsed = await measureTurn(client, sessionId);
+      if (elapsed > EVICTION_SECONDS) {
+        const end = (await client.events(sessionId, 0)).frames
+          .filter(f => f.event === "turn_end")
+          .at(-1);
+        if (end?.data.reason !== "completed") {
+          throw new ProtocolError(`turn ended as ${end?.data.reason ?? "nothing"}`);
+        }
+        return `ran ${elapsed.toFixed(1)}s past a ${EVICTION_SECONDS}s window`;
+      }
+      if (attempt === 2) {
+        throw new ProtocolError(
+          `turn ran ${elapsed.toFixed(1)}s on both attempts, inside the ${EVICTION_SECONDS}s window — ` +
+            "the prompt no longer produces enough tool time to exercise keepalive",
+        );
+      }
+    } finally {
+      await client.deleteSession(sessionId).catch(() => {});
+    }
+  }
+  throw new ProtocolError("unreachable");
+}
+
+/**
+ * Start a turn, abandon its stream at once, then keep away from the object
+ * entirely until the work should be over.
+ *
+ * **Nothing may be sent to the object during the wait.** The session listing
+ * is served by that same Durable Object, so polling it would itself be the
+ * inbound event that resets the inactivity timer — the check would then pass
+ * on the strength of its own requests and would keep passing with keepalive
+ * removed. The wait is therefore a flat sleep, and the object is queried once
+ * afterwards.
+ */
+async function measureTurn(client, sessionId) {
+  const startedAt = Date.now();
+  await client.prompt({ sessionId, text: SLOW_PROMPT, stopAfter: 1 });
+  // Longer than the tool time the prompt buys, so a completed turn has
+  // genuinely outlived the window rather than merely been quick.
+  await new Promise(resolve => setTimeout(resolve, 180_000));
+
+  const listed = await client.listSessions();
+  const session = listed.body.sessions.find(s => s.id === sessionId);
+  if (!session) throw new ProtocolError("session vanished during the wait");
+  if (session.busy) throw new ProtocolError("turn still running after 180s");
+  return (session.updatedAt - startedAt) / 1000;
 }
