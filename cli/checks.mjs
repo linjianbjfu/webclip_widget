@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { assertMonotonic, assertNoGapOrRepeat, Client, cursors, ProtocolError } from "./client.mjs";
-import { replayLine } from "./render.mjs";
+import { replayLine, streamProse } from "./render.mjs";
 
 const WRITE_PROMPT =
   "Use the write tool to create out/note.txt containing exactly: ok. Then reply DONE and stop.";
@@ -239,6 +239,42 @@ export async function runChecks(config) {
         );
       }
       return `recalled ${secret}`;
+    }),
+  );
+
+  await reporter.run("live prose carries no tool arguments", () =>
+    withSession(client, async sessionId => {
+      const live = [];
+      await client.prompt({
+        sessionId,
+        // A tool call is required: its arguments stream as deltas too, and
+        // that is the only way the leak can appear.
+        text: "Run `echo hi` with bash, then say one short sentence about it.",
+        onFrame: frame => {
+          if (frame.event === "stream") live.push(streamProse(frame));
+        },
+      });
+
+      // What a viewer read must be what the log says was said. A renderer
+      // that takes every delta instead of the prose ones splices the tool's
+      // argument JSON into the reply, and the two stop matching.
+      const { frames } = await client.events(sessionId, 0);
+      let recorded = "";
+      for (const frame of frames) {
+        const entry = frame.data;
+        if (entry?.type !== "message" || entry.message?.role !== "assistant") continue;
+        for (const block of entry.message.content ?? []) {
+          if (block.type === "text") recorded += block.text ?? "";
+        }
+      }
+
+      const shown = live.join("");
+      if (shown !== recorded) {
+        throw new ProtocolError(
+          `streamed prose and the log disagree\n  shown:    ${JSON.stringify(shown)}\n  recorded: ${JSON.stringify(recorded)}`,
+        );
+      }
+      return `${shown.length} char(s) matched`;
     }),
   );
 

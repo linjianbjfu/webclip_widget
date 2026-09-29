@@ -29,8 +29,12 @@ function render(frame, { replay = false } = {}) {
       return;
     }
     case "stream": {
-      const events = frame.data?.events ?? [];
-      const text = events.map(e => e.delta ?? e.text ?? "").join("");
+      // Only `text_delta` is prose. A tool call streams its arguments as
+      // `toolcall_delta`, whose delta is a fragment of the argument JSON;
+      // taking every delta prints that JSON into the middle of the reply.
+      // `text_start` carries its first characters in `partial`, which the
+      // following deltas repeat, so the deltas alone reconstruct the text.
+      const text = streamProse(frame);
       if (text) process.stdout.write(text);
       return;
     }
@@ -57,6 +61,23 @@ function render(frame, { replay = false } = {}) {
     default:
       console.log(`${seq}${frame.event}`);
   }
+}
+
+/**
+ * The prose carried by one `stream` frame.
+ *
+ * Only `text_delta` is prose. A tool call streams its arguments as
+ * `toolcall_delta`, whose delta is a fragment of the argument JSON; taking
+ * every delta prints that JSON into the middle of the reply. `text_start`
+ * carries its first characters in `partial`, which the following deltas
+ * repeat, so the deltas alone reconstruct the text exactly.
+ */
+function streamProse(frame) {
+  let text = "";
+  for (const event of frame.data?.events ?? []) {
+    if (event.type === "text_delta") text += event.delta ?? "";
+  }
+  return text;
 }
 
 /**
@@ -93,4 +114,4 @@ function followRenderer() {
   };
 }
 
-export { followRenderer, render, replayLine };
+export { followRenderer, render, replayLine, streamProse };
