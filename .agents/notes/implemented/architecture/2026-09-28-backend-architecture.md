@@ -61,7 +61,7 @@ iOS app
   │  POST  /v1/sessions/{id}/prompt   ──►  响应体即 SSE 流，从第一个 token 起
   │  POST  /v1/sessions/{id}/abort
   │
-  │  GET   /v1/sessions/{id}/events?since=   仅断线重连时使用
+  │  GET   /v1/sessions/{id}/events?since=   历史读取与断线重连
   ▼
 Worker（无状态）            鉴权 → 解析 userId → 路由到 DO
   ▼
@@ -112,7 +112,7 @@ interface BriefProvider {
 }
 ```
 
-`system()` 与 `strip()` 必须成对：投影依赖 `strip` 把 brief 从首条用户消息里摘干净，否则恢复的客户端会看到服务端提示词。实现阶段可从 edge-mac-widget 的版本裁剪起步，但那份文本是为"工具在客户端执行"写的，涉及本机路径与 shell 能力的段落不适用。
+`system()` 与 `strip()` 必须成对：投影依赖 `strip` 把 brief 从首条用户消息里摘干净，否则恢复的客户端可能看到服务端提示词。当前 HTTP 路径未使用 strip。完善内容时可从 edge-mac-widget 的版本裁剪起步，但那份文本是为"工具在客户端执行"写的，涉及本机路径与 shell 能力的段落不适用。
 
 与 edge-mac-widget 的**唯一结构性差异**：那边通过 WebSocket RPC 把 `*Operations` 指向客户端，这边指向同进程的 DO SQLite 文件系统。pi 的这层 seam 不变，换的只是另一端。
 
@@ -177,7 +177,7 @@ CREATE TABLE chunks (file_id INTEGER, idx INTEGER, data BLOB, PRIMARY KEY (file_
 
 这与[下面否决的](#曾考虑的替代方案)"单独建表持久化 token 增量"不冲突：那条否决的是**增量**（一轮几千条），这里是每轮几条协议事件，量级相差三个数量级。
 
-这与 edge-mac-widget 的做法一致：`HistoryMessage` 是 `StoredEntry` 的投影，投影时剥掉藏在首条用户消息里的 operating brief，使恢复的客户端永远看不到服务端的系统提示词。
+edge-mac-widget 的 `HistoryMessage` 会投影 `StoredEntry` 并剥离 operating brief。本项目当前 HTTP 路径直接发送原始 pi 条目，尚未接入面向用户的投影；不能承诺过滤内部条目或提示词。
 
 ### 不持久化 token 增量
 
@@ -210,7 +210,7 @@ interface ThinkingContent {
 }
 ```
 
-恢复会话走的是 `buildSessionContext(原始条目)`，不经过任何投影，因此 thinking 与其签名原样回到上下文，发给上游的请求与当初一致，缓存前缀不因恢复而断裂。客户端历史里看不到 thinking，那是投影所为（`contentText` 只取 `type === "text"`），只影响客户端呈现，不影响喂给模型的那一路。
+恢复会话走的是 `buildSessionContext(原始条目)`，不经过任何投影，因此 thinking 与其签名原样回到上下文，发给上游的请求与当初一致，缓存前缀不因恢复而断裂。当前 HTTP 历史发送原始 pi 条目，包含 thinking 内容；CLI 自己选择呈现哪些部分，不能把 CLI 的过滤理解为服务端协议保证。
 
 这意味着**续传粒度是条目而非 token**：断线期间半截的消息，客户端要等它完成才看得到。对一个本来就会离线几分钟的移动端，这是正确的取舍——它需要的是结果，不是错过的字。代价是省掉了数量级更高的写入。
 
@@ -301,487 +301,57 @@ turn 结束后不再续排 alarm，DO 随即进入正常驱逐路径，空闲不
 
 ### 与客户端的通信
 
-见下面的协议一节。结论是 **SSE + 普通 HTTP**，且**流是 turn 作用域的**：只在一轮 turn 进行期间保持连接，空闲时不挂着。
+HTTP 请求、SSE 载荷、状态码和当前限制由[客户端协议](../../../../docs/protocol.md)维护。本节保存决定这些接口的理由；工作区与存储事实分别见[架构](../../../../docs/architecture.md)和[实现](../../../../src/do/store.ts)。
 
-```
-POST   /v1/sessions                      创建空会话，初始化工作区 → { sessionId }
-GET    /v1/sessions                      列表
-DELETE /v1/sessions/{id}                 删除会话，连同其工作区与条目
-POST   /v1/sessions/{id}/prompt          启动 turn → 200 text/event-stream；首轮在此上传 source 与截图
-GET    /v1/sessions/{id}/events?since=   补发 since 之后的记录；有 turn 在跑则接上
-POST   /v1/sessions/{id}/abort
-```
+#### 发起提示与接收合并
 
-**本版本不做鉴权。** `userId` 暂由请求头直接给出，Worker 不校验。这是一个明确的临时状态，不是疏漏——见[风险](#风险)。
+`POST /prompt` 直接返回 SSE，避免“先返回 202、再另开 GET”期间丢失未持久化的 token 增量。iOS 使用支持 POST 的流式 HTTP 客户端，不依赖只支持 GET 的浏览器 `EventSource`。
 
-**`POST /prompt` 直接返回 SSE 流，而不是返回 `202` 再让客户端另开一条 GET。** 后者存在一个真实的竞态：两步之间产生的 token 增量会丢失——因为增量不落盘（见上一节），客户端会看到一条消息的开头不是流进来的，而是等整条完成后突然出现。发起与接收合并为同一个请求，这个窗口从根上不存在。
+创建会话与上传分开，因为建会话是轻量操作，重试可能产生新的空会话；上传则需要 turn 的幂等约束。换一个网页时新建会话，避免旧工作区与产物混入新任务。
 
-浏览器的 `EventSource` 只支持 GET，但本项目的客户端是 iOS：`URLSession.bytes(for:)` 对 POST 同样适用，且 SSE 解析本来就要自己写，不依赖 `EventSource`。
+历史与跟随共用 `GET /events`：补发后有 turn 就跟随，没有就终止，不增加 `follow` 开关或单独的 JSON 历史接口。客户端打开会话需要同一条处理路径；即使列表查询后 turn 已结束，读事件仍能正常返回，消除“先查忙碌、再订阅”之间的竞态。会话列表负责摘要，当前没有后台预取需求。
 
-#### `GET /events` 只有一条规则
+#### 上传编码
 
-> 补发 `since` 之后的记录；**有 turn 在跑就接上，没有就立即 `stream_end` 关闭**。
+多个文件由 multipart 承载，压缩用 Workers 原生的 gzip 解码，不增加需要中央目录解析和额外依赖的 zip 容器。已有实测中 30 KB 的重复 HTML 压缩到 87 字节并无损还原。当前按 `.gz` 后缀或 `application/gzip` MIME 类型识别；截图只落盘，不自动作为图片输入注入模型。
 
-```
-GET /events?since=0      读全部历史；若此刻正有 turn 在跑，则继续跟着它
-GET /events?since=41     断线重连：补齐缺口后接实时流；若那轮已结束，补齐即关
-```
+相同 `turnId` 的重试不再写入文件，客户端可以改用 JSON 重试，避免重复上传。新 turn 的文件写入先于空提示与并发检查，所以被拒绝的 multipart 请求仍可能改变工作区。
 
-没有开关参数。曾经考虑过加一个 `follow` 让调用方选择是否订阅，但客户端**只在展示某个会话时才会拉 events**，而那时它就是想跟——找不到传 `false` 的调用方。会话列表的摘要由 `GET /sessions` 提供，v1 也没有后台预取或离线同步。参数因此只会增加每个调用点的一次判断，不产生选择。
+#### 幂等、续传与分组
 
-**没有单独的 `GET /history`。** 它曾经存在，返回条目投影的 JSON 数组，但它是 `GET /events?since=0` 的真子集，只是换了一种编码。客户端无论如何都要实现 SSE 解析（`POST /prompt` 的响应就是 SSE），因此"JSON 更易解析"不构成保留它的理由。
+客户端生成 `turnId`，因为只有它知道一次请求是不是重试；服务端生成 `seq`，因为只有它知道日志顺序。`turnId` 标识提交，`seq` 标识会话日志位置，跨 turn 连续。按 session 与 seq 重连，不要求离线客户端先判断自己错过了哪些轮次。
 
-投影规则对两种用法一致，包括把工作区中各 `/out` 路径的**当前**内容附到最后一条 `turn_end` 上——新设备因此一次请求即可得到对话历史与可渲染的 widget。
+同一次提交的重试复用同一个小写 UUIDv4，不同提交用不同 UUID。计数器不能满足要求：服务端会话仍在，而客户端重装后计数归零，会命中旧 turn，导致新输入被静默忽略。服务端发号也不能解决发号请求超时后的歧义。随机 UUID 避免计数器复用；客户端仍须保存待重试提交的 ID，丢失它就不能保证重试去重。
 
-`GET /events` 用于**断线重连**时，SSE 每条事件带 `id: <seq>`，重连时客户端带上 `Last-Event-ID`（或等价的 `since=`），服务端据此补发已完成的条目——这正是 edge-mac-widget 手工实现的 `sinceSeq` 游标，只不过由协议本身定义了语义。
+`since` 同时用于历史、幂等重试和新提示，补齐“读历史响应关闭”到“提交提示到达”之间的记录。当前服务端读取查询参数或请求字段，不读取 `Last-Event-ID` 请求头。
 
-#### `POST /sessions`：建会话并初始化工作区
+日志内部的 `turn_id` 可用于分组，但当前 SSE 不统一包装这个字段；客户端不能假设每个 `entry` 都包含 turn 标识。未来提供统一投影时需要定义分组字段。
 
-```http
-POST /v1/sessions
-Content-Type: application/json
+进行中拒绝不同 `turnId`，客户端本地排队。引入 steer 会把新提示注入已有轮次，使“一个提交对应一轮”的关系失效；若支持它，需要把 `turnId` 明确定义为提交 ID，并另设条目的轮次分组字段。
 
-{ "title": "某某股票页面" }        // 可选
-```
+幂等依赖保留的 turn 行，不能结束后立即删除；无限保留则会让表持续增长。当前 alarm 按 24 小时保留期清理，迟到重试不能依赖清理后的去重。
 
-返回 `201` 与 `{ "sessionId": "…" }`。服务端在此创建会话行并初始化该会话的空工作区（建立 `/out` 目录约定），**不接收任何网页内容**——source 与截图随首轮 prompt 上传。
+#### 产物交付与未完成的恢复路径
 
-这样切分的理由：会话创建是轻量的、可重试的；而上传是重活。把两者合并会让创建端点也要处理 multipart、gzip 与幂等，而失败重试的语义完全不同（建会话重试会产生多余的空会话，上传重试必须幂等）。
+产物以 `/out` 实际文件为准，不以模型回答里的声明为准；`preview_widget` 使用 `out/widget.html`。实时 `turn_end` 内联内容，避免在线客户端再发一次请求。事件日志仅保存路径、字节数与哈希，避免每轮把完整内容塞进 SQLite 单行，也避免历史随文件反复修改而膨胀。内容交付没有大小阈值，减少了按大小分支的行为与测试。
 
-一个会话对应一个剪藏任务。**若用户要换一个网页，新建会话**，而不是在原会话里替换 source——工作区里已有的中间产物与 `/out` 对新网页没有意义，复用只会让上下文混淆。
+原设计为离线客户端选择“从工作区取当前内容并附到历史投影”，而不是保存每一轮的文件快照：客户端需要可渲染的当前 widget；工作区已经拥有最新版本，不必在事件中再做按路径取最新的判断。删除后的路径只剩历史元数据。这个投影目前未实现；当前回放只有元数据，且没有下载端点，不能从历史恢复产物内容。
 
-#### `POST /prompt` 的请求与响应
+独立产物读取端点曾因与完整历史读取重叠而未采用；如果产品需要只展示 widget 的列表而不读取对话，应重新评估独立端点。当前缺少历史内容投影也使产物恢复成为实际接入缺口。客户端可保存实时内容和 sha256，但缓存不能代替离线恢复接口。
 
-纯文本的后续轮次用 JSON：
+`out_file` 的设计用途是只通知元数据，避免一轮里五次写入就发送五份完整文件。若实现，应接在文件系统层以覆盖 write、edit 与 shell 重定向；工具参数不能可靠重建内容。当前日志类型保留该事件，但执行路径没有发布，不能作为已交付的通知通道。
 
-```http
-POST /v1/sessions/{sessionId}/prompt
-Content-Type: application/json
+#### 连接终止与多个读者
 
-{
-  "turnId": "9f2c7b1e-4a83-4d15-9c60-7e3b2a5f8d01",
-  "text":   "把折线图改成柱状图",
-  "since":  41
-}
-```
+`turn_end` 是可回放的轮次事件，`stream_end` 是当前连接的结束信号。一次历史回放可能跨多轮，因此不能在遇到首个 `turn_end` 时停止。未收到 `stream_end` 就关闭意味着需从已保存的 seq 重连；否则客户端会在真实掉线时提前放弃，或对正常结束无限重试。
 
-**首轮携带网页内容时用 `multipart/form-data`**，`request.formData()` 在 Workers 原生可用：
+同一会话允许多个独立订阅者。网络切换时，服务端可能尚未发现旧 TCP 已断，而客户端已建立新连接；拒绝第二条连接会把这个常见状态变成额外错误。每条连接有自己的 since 和队列，共享 DO 内存中的 Hub 广播。
 
-```http
-POST /v1/sessions/{sessionId}/prompt
-Content-Type: multipart/form-data; boundary=…
+补发与注册在一个无 await 的同步块中完成：先补发再异步注册可能漏事件，先注册再补发可能乱序；SQLite exec 同步返回使快照与注册之间不会插入广播。真实写出异步执行，补发仍先于实时事件入队。
 
---…
-Content-Disposition: form-data; name="turnId"
-9f2c7b1e-4a83-4d15-9c60-7e3b2a5f8d01
---…
-Content-Disposition: form-data; name="text"
-把这个页面做成 widget
---…
-Content-Disposition: form-data; name="file"; filename="source.html"
-Content-Type: text/html
-Content-Encoding: gzip          ← 可选，服务端按此解压
-<gzip 字节>
---…
-Content-Disposition: form-data; name="file"; filename="screenshot.png"
-Content-Type: image/png
-<png 字节>
---…
-```
+写入与关闭都不能等待订阅者。TransformStream 的 close 需要读端排空队列；等待可能把 agent 卡在已进入后台的客户端上。队列超限时丢弃慢订阅者以保护执行端；可靠续传依赖持久化记录。当前同一队列也限制历史补发，长历史可能截断，这个缺口尚未解决。
 
-每个 `file` 部分被写入该会话工作区的根目录（`source.html`、`screenshot.png`）。**截图同时作为图片输入进入模型上下文**，不只是工作区里的一个文件。
-
-**用 gzip，不用 zip。** `DecompressionStream("gzip")` 在 Workers 原生可用（已实测：30 KB 的重复 HTML 压到 87 字节，往返无损），而 zip 是容器格式，需要自行解析中央目录、引入依赖。多个文件由 multipart 承载，不需要再套一层归档。
-
-体积不成问题：Workers 的入站请求体上限为 100 MB（Free/Pro），而输入是 5 MB 量级的 HTML 加一张截图。
-
-| 字段 | 必填 | 说明 |
-|---|---|---|
-| `turnId` | 是 | 客户端生成的 **UUIDv4**，小写带连字符的标准形式。服务端在 session 内查找；客户端须保证「同一次提交重试给出同一个 id」在本地状态丢失后仍成立——见下 |
-| `text` | 二选一 | 提示文本；与 `images` 至少有其一非空 |
-| `images` | 二选一 | 图片输入，沿用 edge-mac-widget 的 `PromptImage` 与其尺寸/数量上限 |
-| `since` | 否 | 客户端游标：服务端先补发该 `seq` 之后已有的记录，再接本轮的实时事件。省略视为 `0`，即补发整个会话 |
-| `file` | 否 | 仅 multipart 形态。可重复，每个写入工作区根目录。`Content-Encoding: gzip` 时服务端解压后再落盘 |
-
-**重试同一个 `turnId` 时不必重传文件。** 服务端命中已有 turn 即接流，不再读取 multipart 的文件部分——这正是幂等在此处的实际价值：5 MB 的上传不会因为一次超时而重来。
-
-模型与思考等级不在此处设置——它们属于会话，由 `POST /v1/sessions` 创建时确定，并随会话持久化。
-
-响应恒为 `200` + `text/event-stream`，错误在流内以事件形式下发，而不是用状态码。唯一的例外是下面这些**请求本身就不合法**的情况：
-
-| 状态码 | 条件 |
-|---|---|
-| `400` | `turnId` 缺失或不是合法 UUIDv4；`text` 与 `images` 同时为空 |
-| `404` | `sessionId` 不存在 |
-| `409` | 该会话已有**另一个** `turnId` 处于 `running`（响应体给出该 `turnId`） |
-
-**`409` 不影响任何正在进行的东西**：被拒的只是这一个请求，turn 继续运行，已有的订阅者继续收事件。客户端据响应体里的 `runningTurnId` 选择等待（读到 `stream_end` 后再提交）或中断（先 `POST /abort`）。
-
-客户端会同时持有两条流的情形只有一种，下表穷举：
-
-| 客户端当前持有的流 | 提交时的状态 | 结果 |
-|---|---|---|
-| 无（读完历史后流已关闭） | 无轮在跑 | 开新轮，**一条流** |
-| 无 | 有轮在跑 | `409`，仍是零条流 |
-| 有（正跟着某轮） | 提交**不同** `turnId` | `409`，仍是那一条流 |
-| 有（正跟着某轮） | 提交**相同** `turnId` | 幂等命中，**两条流** |
-
-只有最后一行会出现两条。读历史不会导致两条流：无轮在跑时补发完即关闭，有轮在跑时那条流本身就是客户端正在跟的那条。
-
-对称地，**用正在运行的那个 `turnId` 提交则是幂等命中**：不开新轮，该 POST 的响应成为同一轮的又一个订阅者。若该客户端已经开着 `GET /events`，它此时持有两条流收同一份广播——浪费但无害，关掉一条即可。
-
-`409` 意味着 **v1 不支持在一轮进行中插入新提示**。edge-mac-widget 的协议里有 `streamingBehavior: "steer" | "followUp"`，本版本不实现：steer 会把新提示注入正在运行的那一轮，使得"一个 `turnId` 对应一轮"不再成立，条目的 `turn_id` 分组语义随之模糊。客户端在本地排队、待 `stream_end` 后再提交即可——对一个本就可能离线的移动端，本地排队是自然的做法。**若将来需要 steer，`turnId` 的语义要从"标识一轮"改为"标识一次提交"，届时条目分组需要另设字段。**
-
-#### 产物：`/out` 目录与它的两条回传通道
-
-agent 把最终产物写进工作区的 `/out` 目录（`out/widget.html`、`out/extra.js`）。客户端通过两条互补的通道获得它们。
-
-**通道一：`out_file` 事件，只带元数据。**
-
-```
-id: 58
-event: out_file
-data: {"path":"out/extra.js","bytes":2431,"sha256":"a3f…"}
-```
-
-该事件**由文件系统层发出，不由工具层发出**。这一点是刻意的：agent 未必用 `write` 工具写文件，它完全可能用 shell 重定向（`sed … > out/extra.js`）或 `edit` 工具。挂在工具层会漏掉前者，而 `edit` 的参数是 `old_string` / `new_string`，客户端**无法据此重建文件内容**。挂在文件系统层则覆盖全部写入路径，且不依赖任何工具的参数格式。
-
-事件不携带内容，因为 agent 会反复改：一轮里 `out/extra.js` 可能被写五次（预览、发现报错、修、再预览），内容跟着每次写入走就是把同一个文件发五遍，而只有最后一遍有用；断线重连补发时还要再发五遍。
-
-**通道二：`turn_end` 携带最终清单，小文件内联。**
-
-```
-event: turn_end
-data: {
-  "turnId": "9f2c…", "reason": "completed",
-  "out": [
-    {"path":"out/widget.html","bytes":8120,"sha256":"…","content":"<!doctype html>…"},
-    {"path":"out/extra.js",  "bytes":2431,"sha256":"…","content":"document.get…"}
-  ]
-}
-```
-
-**没有大小阈值，内容一律内联。** 客户端无需任何额外往返即可拿到最终产物。
-
-**但内容不存进事件日志。** `turn_end` 落盘时只保留 `path` / `bytes` / `sha256`；读取历史时投影**从工作区读取当前内容**贴上去：
-
-```
-events 表        turn_end → {path, bytes, sha256}     小记录
-files / chunks   out/extra.js 的当前内容               分块存储
-                          ↓
-读取历史时      投影 join，把当前内容附到最后一条 turn_end 上
-```
-
-这样安排消掉了四件事：
-
-- **不受 2 MB 行上限约束**——内容在 `chunks` 里，那套分块机制实测可承载 50 MB；若内容直接写进 `events.payload`，一个数百 KB 的 `widget.html` 就已经逼近上限
-- **不需要大小阈值**——没有"超过多少就退化"的分支，也就没有那个分支的测试与失败模式
-- **不需要独立的产物读取端点**——读取历史时永远携带当前内容
-- **不需要"按路径取最新"的投影规则**——工作区里本来就只有当前版本，被取代的旧版本并不存在
-
-最后一条是顺带的收益：上一版设计需要在投影时判断哪条 `turn_end` 是某路径的最新一条，现在这个判断消失了。
-
-**语义随之明确：历史里的产物永远是当前状态，不是"当时那一版"的快照。** 这符合客户端的实际需要——它要的是能渲染的 widget，不是历史版本考古。若某路径在后续轮次中被删除，历史中它只剩元数据，这是忠实的呈现。
-
-**本版本不提供独立的产物读取端点。** 两条通道已经覆盖全部场景：在线时 `turn_end` 内联，离线或换设备时 `GET /events?since=0` 携带当前内容。再加一个 `GET /out/{path}` 只是第三种拿同一份数据的方式，而多一个端点就多一套鉴权、错误处理与测试。
-
-它在一种情况下会变得必要：**客户端只想取产物而不想拉整个会话历史**。目前没有这个需求——iOS 客户端打开会话时本来就要渲染对话。若将来出现（例如做一个"我的 widget"列表页，不展示对话），再加。
-
-客户端可据 `sha256` 判断本地缓存是否最新，避免重复写入。
-
-**`/out` 是强制约定而非建议。** `preview_widget` 渲染的是 `out/widget.html`；产物的判定以该目录下的实际文件为准，不以 agent 在回答里的声明为准。
-
-#### `since` 是通用游标，不只用于重试
-
-`POST /prompt` 的响应流在接入本轮实时事件之前，先补发 `since` 之后已有的记录。这覆盖三种情形：
-
-| 情形 | 作用 |
-|---|---|
-| 同 `turnId` 重试 | 不重复接收已经收到的部分 |
-| 刚读完历史就提交 | 消除"读历史的响应关闭"与"POST 到达"之间可能产生的缺口 |
-| 省略 `since` | 视为 `0`，补发整个会话——新客户端可以只用这一个请求开局 |
-
-第二种情形是它不只属于重试路径的理由：客户端读到 `seq=41` 后提交新一轮时带上 `since=41`，**无论这期间是否有别的事件产生，流都是连续的**。
-
-#### 幂等：turnId 由客户端生成
-
-`POST /prompt` 发出后、响应头返回前断线，是移动端的常规情形。此时客户端无法判断这一轮是否已经启动，而直接重试会开出第二轮并为同一次请求付两次 LLM 费用。
-
-因此 `turnId` 由**客户端**生成并随请求提交，服务端据此判重：
-
-| `turnId` 状态 | 服务端行为 |
-|---|---|
-| 不存在 | 启动新一轮，返回流 |
-| 存在且进行中 | **不启动新轮**，把流接到该轮上 |
-| 存在且已结束 | 按 `since` 补发该轮之后的条目，随即 `stream_end` 并关闭 |
-
-客户端可以安全地重试同一个 `turnId`。重试时带上 `since` 可避免重复接收已有的条目。
-
-**`turnId` 要保证的性质不是"唯一"，而是：同一次提交的重试给出同一个 id，不同的提交给出不同的 id。** "唯一"只是这个性质的后半；前半"重试要能对上"才是 `turnId` 存在的理由。
-
-由此得出两条不同的义务：
-
-- **服务端**只需在 session 内查找（`WHERE session_id = ? AND turn_id = ?`），因此唯一性范围是 session
-- **客户端**必须保证上述性质在**本地状态丢失后依然成立**，因此不能使用计数器。**统一使用 UUIDv4**（iOS 侧 `UUID().uuidString` 即可，无需额外依赖）
-
-计数器满足不了第二条，因为 **session 由服务端持有，而计数器由客户端持有，两者寿命不同**：
-
-```
-Day 1  客户端在 session "abc" 中发出 5 轮，turnId = 1..5
-       服务端在幂等窗口内保留这些 turn 行
-
-       用户重装 app：本地计数器归零，但 session "abc" 仍在服务端
-
-       客户端拉回会话列表，用户输入新需求
-       客户端发送 { turnId: "1", text: "新需求" }
-
-服务端  命中 turn_id = "1"，status = completed
-       → 按幂等规则补发那一轮的历史事件后关闭
-       → 新需求从未执行，且没有任何错误
-```
-
-**用户输入被静默吞掉**，比报错严重得多。
-
-改用服务端发号不能解决问题：客户端需要先请求一个 id，而那次请求同样可能超时——客户端依然无法判断 id 是否已生成，歧义只是从 prompt 挪到了发号。客户端生成随机值不需要往返、不需要持久化状态，天然满足该性质，与 `Idempotency-Key` 的通行做法一致。
-
-#### 寻址：turnId 管幂等，seq 管续传
-
-两个标识故意分开，且**生成方相反**：
-
-| | 由谁生成 | 回答什么 | 出现在 |
-|---|---|---|---|
-| `turnId` | **客户端** | 这次重试是否为同一轮 | `POST /prompt` 请求体 |
-| `seq` | **服务端** | 我落下了哪些事件 | SSE 的 `id:` 字段 |
-
-客户端生成 `turnId`，因为只有它知道一次请求是不是重试；服务端生成 `seq`，因为只有它知道条目的全局顺序。客户端对 `seq` 只做原样回传，不解释其数值。
-
-`seq` 在一个 session 内单调递增，跨 turn 连续。因此重连时客户端**按 session 寻址即可**，不需要记住自己当时在哪一轮：
-
-```
-app 启动
-  → GET /v1/sessions                     看到某会话仍在跑（由 turns 推导）
-  → GET /v1/sessions/{id}/events?since=41
-       先补发断线期间已完成的条目，再接上实时增量
-       轮结束 → turn_end 事件；连接终止 → stream_end，流关闭
-```
-
-若让客户端按 `turnId` 重连，它必须先判断自己属于哪一轮、那一轮结束没有、之后又跑了几轮；按 `seq` 则只需记住一个数字。离线时间越长，前者越容易出错。
-
-**分组信息随数据下发，不进 URL。** 一次跨多轮的补发会把若干轮的条目混在一起，客户端仍需知道哪些属于同一轮——这由 `events.turn_id` 提供，随每条事件下发。寻址用 `session + seq`，分组用载荷里的 `turn_id`。
-
-#### 一轮完整的线缆示例
-
-首轮携带网页内容，到产物回到客户端为止：
-
-```http
-POST /v1/sessions/abc/prompt
-Content-Type: multipart/form-data; boundary=…
-  turnId=9f2c7b1e-…   text=把这个页面做成 widget
-  file=source.html (Content-Encoding: gzip)   file=screenshot.png
-
-HTTP/1.1 200 OK
-Content-Type: text/event-stream
-```
-
-```
-event: stream
-data: {"events":[{"k":"text_delta","text":"我先读一下页面"}]}
-
-event: tool_start
-data: {"toolCallId":"t1","name":"read","args":{"path":"/source.html"}}
-
-event: tool_end
-data: {"toolCallId":"t1","name":"read","isError":false,"output":"…"}
-
-id: 55
-event: entry
-data: {"kind":"tool_result","toolCallId":"t1",…}
-
-event: tool_start
-data: {"toolCallId":"t2","name":"write","args":{"path":"/out/extra.js","content":"…"}}
-
-id: 57
-event: out_file
-data: {"path":"out/extra.js","bytes":2431,"sha256":"a3f…"}
-
-id: 58
-event: out_file
-data: {"path":"out/widget.html","bytes":8120,"sha256":"b71…"}
-
-id: 59
-event: turn_end
-data: {
-  "turnId":"9f2c7b1e-…","reason":"completed",
-  "out":[
-    {"path":"out/widget.html","bytes":8120,"sha256":"b71…","content":"<!doctype html>…"},
-    {"path":"out/extra.js",  "bytes":2431,"sha256":"a3f…","content":"document.getEl…"}
-  ]
-}
-
-event: stream_end
-data: {"sessionBusy":false}
-```
-
-客户端读到 `turn_end` 即把 `out[].content` 写入本地缓存，整轮结束，**没有第二个请求**。
-
-`id: 59` 落盘时只保留 `out` 里的元数据，`content` 不进事件日志。后续回放时，投影会从工作区读取各路径的**当前**内容重新附上——因此新设备一次拉历史即可得到可渲染的 widget。
-
-过程中的两条 `out_file` 让客户端在 turn 结束前就能显示"已生成 extra.js"。它们不带内容，因为 agent 常常反复改同一个文件（写 → 预览 → 发现报错 → 改 → 再预览），内容跟着每次写入走就是把同一个文件发很多遍。`turn_end` 的清单**只含最终版本**。
-
-#### 事件清单
-
-流中只出现下列事件类型。带 `id:` 的推进 `Last-Event-ID`，不带的不推进（见下）。
-
-| `event:` | 带 `id:` | 载荷 | 用途 |
-|---|---|---|---|
-| `stream` | 否 | `{events:[…]}` | 合帧后的 token 与思考增量（`text_delta` / `thinking_delta`），渲染用 |
-| `entry` | 是 | pi 条目的投影 | 完成的消息、工具调用、工具结果 |
-| `tool_start` | 否 | `{toolCallId,name,args}` | agent 开始执行某工具——**客户端据此知道它在干什么** |
-| `tool_update` | 否 | `{toolCallId,text}` | 工具的流式输出（如 bash 的 stdout） |
-| `tool_end` | 否 | `{toolCallId,name,isError,output}` | 工具结束；完整结果另以 `entry` 落盘 |
-| `out_file` | 是 | `{path,bytes,sha256}` | `/out` 下的文件被写入 |
-| `compaction` | 否 | `{phase:"start"\|"end"}` | 上下文压缩，可能持续数秒，用于向用户解释停顿 |
-| `turn_end` | 是 | `{turnId,reason,out:[…]}` | 一轮结束，携带最终产物清单 |
-| `error` | 是 | 见下 | 本轮失败 |
-| `stream_end` | 否 | `{sessionBusy}` | 连接终止符 |
-
-`tool_*` 三类不带 `id:`，因为它们是同一份事实的瞬时视图——权威记录是随后落盘的 `entry`。客户端用 `tool_*` 做实时呈现，断线重连后从 `entry` 得到同样的信息，不会因为漏了 `tool_start` 而丢失状态。
-
-#### 错误事件
-
-```
-id: 61
-event: error
-data: {
-  "turnId": "9f2c…",
-  "code":   "llm_failed",
-  "message":"上游返回 429，已重试 3 次",
-  "retryable": true
-}
-```
-
-`code` 取自封闭集合，客户端据此决定行为，不解析 `message`：
-
-| `code` | 含义 | 客户端应当 |
-|---|---|---|
-| `llm_failed` | 上游调用失败 | 提示并允许重试（新 `turnId`） |
-| `turn_timeout` | 超过最长时限被强制结束 | 同上 |
-| `recovery_exhausted` | 恢复次数超上限 | 同上 |
-| `internal` | 未分类的服务端错误 | 提示，不自动重试 |
-
-`error` 之后必定紧跟 `stream_end`。错误**不使用 HTTP 状态码**，因为响应头在第一个 token 之前就已发出——状态码那时还不知道。仅请求本身不合法的情况用状态码（见上表）。
-
-工具执行失败**不产生 `error` 事件**：它作为 `isError` 的工具结果回给模型，由模型决定怎么办，整轮继续。
-
-#### 流的终止：`stream_end` 与 `turn_end` 是两回事
-
-一次跨多轮的补发里本来就含有多个"轮结束"，因此轮边界与流终止必须是不同的事件，否则客户端无法判断读到哪个才该停：
-
-```
-id: 55
-event: turn_end               // 数据事件：某一轮结束，带 id，推进游标
-data: {"turnId":"9f2c7b1e-4a83-4d15-9c60-7e3b2a5f8d01","reason":"completed"}
-
-id: 56
-event: entry                  // 下一轮的条目继续
-data: {…}
-
-event: stream_end             // 终止符：无 id，不推进游标
-data: {"sessionBusy":false}
-```
-
-- **`turn_end`** 是流中的一个数据事件，标记一轮结束，携带 `turnId` 与结束原因（`completed` / `aborted` / `failed`）
-- **`stream_end`** 是连接的终止符，含义是"这条连接不会再有内容"
-
-**客户端只看 `stream_end` 决定是否重连**：收到它之后关闭即为干净结束；未收到它就关闭即为掉线，带 `Last-Event-ID` 重连。缺少这个区分，客户端面对一条关闭的流无法判断该不该重试——要么无限重连一个已结束的 turn，要么在真掉线时过早放弃。
-
-#### `GET /events` 在 turn 已结束时的行为
-
-补发、发终止事件、关闭。**不返回错误。**
-
-| `since=N` 时的状态 | 行为 |
-|---|---|
-| turn 进行中，`N` 落后 | 补发 `N` 之后的条目 → 接入实时流 → 轮结束发 `turn_end` → `stream_end` → 关闭 |
-| turn 进行中，`N` 已是最新 | 直接接入实时流 → 轮结束发 `turn_end` → `stream_end` → 关闭 |
-| **turn 已结束** | 补发 `N` 之后的条目（含其中各轮的 `turn_end`）→ 立即 `stream_end` → 关闭 |
-
-三种情况对客户端是同一条代码路径。
-
-这样设计是为了消除一个真实竞态：客户端开 app 的流程是 `GET /sessions` 看到该会话繁忙，再开 `/events`——而这两步之间 turn 完全可能结束。若 `/events` 对已结束的 turn 报错（404 或 409），客户端就必须处理这个竞态；现在它只是拿到补发与终止事件，与正常路径无异。
-
-无轮在跑时这正是读取历史的常规用法，不存在多余的第二个端点。
-
-#### 请求处理器与 pi 事件的连接
-
-`POST /prompt` 必须立即返回一个 `Response`，而正文由 pi 的事件回调持续产生。两者用 `TransformStream` 连接：处理器返回 readable 一端，事件回调写 writable 一端。
-
-```ts
-async handlePrompt(sessionId: string, turnId: string, text: string, since: number): Promise<Response> {
-  const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>()
-  const sub = this.hub.subscribe(sessionId, writable.getWriter())
-
-  const existing = this.store.getTurn(sessionId, turnId)   // 复合主键
-  if (!existing) {
-    this.store.beginTurn(sessionId, turnId, text)            // 调用前已排除"另一轮在跑"（否则 409）
-    this.scheduleKeepAlive()                                 // 30 秒后的保活 alarm
-    // 不 await：turn 在 DO 内自行运行，与这条响应的生命周期无关。
-    this.runTurn(sessionId, turnId, text)
-      .catch(err => this.hub.fail(sessionId, err))
-      .finally(() => this.hub.endTurn(sessionId, turnId))
-  } else {
-    await sub.backfill(this.store.eventsSince(sessionId, since))   // 同 turnId 重试，从客户端游标补
-  }
-
-  return new Response(readable, { headers: { "content-type": "text/event-stream" } })
-}
-```
-
-**`runTurn` 不能被 await**，否则响应要等整轮结束才返回，流式就没有了。turn 的存活因此不依赖这条响应，而由[保活 alarm](#第一层turn-期间的保活-alarm) 承担。
-
-pi 一侧无需改动：`session.subscribe(handler)` 照旧，只是 `Outbox` 的 `send` 回调从"写单个 WebSocket"变为"向订阅者集合广播"。
-
-#### 多个读者
-
-`POST /prompt` 的流尚未关闭时，同一客户端可能又开了一条 `GET /events`（例如重试逻辑误触发）。DO 维护一个订阅者集合并向全体广播，不拒绝第二条连接——拒绝会把一个无害的竞态变成一个需要客户端处理的错误。每条连接各自按自己的 `since` 先补齐再接入实时流。
-
-**"接入实时流"就是把自己加入订阅者集合**，不是复用别人的连接。Hub 活在 DO 内存中，而同一 `sessionId` 的全部请求落到同一个 DO 实例，因此后到的连接能拿到同一个 Hub：`POST /prompt` 的响应是订阅者 A，`GET /events` 的响应是订阅者 B，两条 HTTP 响应彼此独立，只是被喂同一份广播。
-
-**补发与注册之间存在竞态，靠同步块消除。** 先补发后注册会漏掉补发期间广播的事件；先注册后补发会让实时事件排在旧记录之前，造成乱序与重复。由于 `sql.exec()` 同步返回，读快照与注册可以放进同一个同步块——中间没有 `await`，JS 单线程保证其间不会有广播插入：
-
-```ts
-// 同步块内完成，边界就此确定
-const rows = this.sql.exec(
-  "SELECT seq, kind, payload FROM events WHERE session_id=? AND seq>? ORDER BY seq",
-  sessionId, since,
-).toArray()
-const sub = this.hub.subscribe(sessionId, writer)
-sub.enqueue(rows.map(toFrame))     // 入队；实际写出异步，但顺序已定
-```
-
-写出本身是异步的，顺序却在同步块里定死：每个订阅者持有一条有序队列，补发先入队、实时后入队。这是"DO 的 `exec()` 同步返回"带来的第二处收益，第一处是让 `getAllPaths()` 得以实现。
-
-**最常见的多订阅者场景不是重试误触发，而是服务端感知不到 TCP 已断。** 客户端进入后台或切换网络后，`POST /prompt` 那条响应在服务端看来仍然打开；客户端回来后开一条 `GET /events`，于是集合里同时有一个已死的 A 和一个活的 B。A 会一直留着，直到某次写入失败或积压超限被移除——这正是下面积压上限的主要用途。
-
-**广播与关闭都不等待任何订阅者。** 向订阅者写入时不 `await`，并为每个订阅者设积压上限；超限即关闭该订阅者并将其移出集合。**关闭同样不能 `await`**：`TransformStream` 有背压，`writer.close()` 要等队列排空，而队列排空取决于对端是否在读——去等它就是卡在恰好需要被丢弃的那个客户端上，与不 `await` 写入是同一条理由的另一半。慢消费者被直接丢弃而不做流控，因为重连是无损的：客户端带 `since=` 回来即可从条目补齐。让 agent 循环去等一个可能已进入后台的 iOS 客户端，代价远大于让它重连。
-
-#### `id:` 只打在有条目支撑的事件上
-
-SSE 规范中，不带 `id:` 的事件不推进 `Last-Event-ID`。利用这一点：完成条目（`message_end`、`tool_execution_end` 等）的帧带 `id: <seq>`，而 token 增量帧**不带 `id:`**。
-
-```
-id: 41
-event: entry
-data: {…}
-
-event: stream          ← 增量批，无 id，不推进游标
-data: {"events":[{"k":"text_delta","text":"…"}]}
-
-id: 42
-event: entry
-data: {…}
-```
-
-于是客户端的游标自动停在最后一条完整条目上，恰好等于本设计的续传粒度。不需要两套 id 空间，也不需要客户端判断哪些 id 可以作为断点。这是"不持久化增量"这一决定在协议层的直接推论。
+只有可回放事件带 `id:`，增量不推进客户端游标。这让客户端续传位置停留在完整条目上，不需要第二套 ID 空间，也不会从半条消息中间恢复。
 
 ## 客户端协议：SSE 还是 WebSocket
 
@@ -851,25 +421,25 @@ session 作用域唯一的实质优势是消除竞态，而那个问题由"`POST
 
 ## 验证
 
-分层归属见[测试策略](../testing/2026-09-28-test-strategy.md)。不依赖 pi 的层由 `test/` 下的自动化用例钉住，共 66 条，跑在真实 workerd 内；pi 接入与保活只能由部署后的实跑覆盖。
+分层归属见[测试策略](../testing/2026-09-28-test-strategy.md)。不依赖 pi 的层由 `src/` 中与实现并置的自动化用例钉住，跑在真实 workerd 内；pi 接入与保活只能由部署后的实跑覆盖。
 
 ### 自动化覆盖
 
-**事件日志**（`test/store.test.ts`）：`seq` 会话内单调且跨 turn 连续，两个会话的序号空间互不干扰；重建上下文只读 `kind='pi_entry'`，而续传读取全部；批量追加是单个事务——一条无法序列化的载荷使整批不可见，`lastSeq` 不前进；游标返回无缺口无重复。
+**事件日志**（`src/do/store.test.ts`）：`seq` 会话内单调且跨 turn 连续，两个会话的序号空间互不干扰；重建上下文只读 `kind='pi_entry'`，而续传读取全部；批量追加是单个事务——一条无法序列化的载荷使整批不可见，`lastSeq` 不前进；游标返回无缺口无重复。
 
 **turn 表**：已结束的行保留且带 `ended_at`，幂等窗口据此回答迟到的重试；会话繁忙由 `turns` 推导，不存在可漂移的冗余列；陈旧 turn 可被发现，恢复次数递增；清理只删除超过保留期的已结束行。
 
 **恢复**：被中断的 turn 重建上下文时排除自己的记录——`prompt()` 会追加用户消息，否则模型会看到它两次；记录仍留在日志中。
 
-**SSE**（`test/sse.test.ts`）：`id:` 只出现在可回放的记录上，增量帧不带因而不推进 `Last-Event-ID`；载荷中的换行不破坏帧结构；补发先于实时送达；两个订阅者收到同一份广播且各自按自身游标补齐；停止读取的订阅者在积压超限后被移除而广播继续；有限流发完即关闭，后续广播到不了它。
+**SSE 与广播**（`src/do/sse.test.ts`、`src/do/hub.test.ts`）：`id:` 只出现在可回放的记录上，增量帧不带因而不推进 `Last-Event-ID`；载荷中的换行不破坏帧结构；补发先于实时送达；两个订阅者收到同一份广播且各自按自身游标补齐；停止读取的订阅者在积压超限后被移除而广播继续；有限流发完即关闭，后续广播到不了它。
 
-**turn 生命周期**（`test/turns.test.ts`）：保活在仍有 turn 运行时续排；陈旧 turn 被恢复而非判失败；超过时限或恢复次数上限的被放弃，且时限优先于次数；多会话逐个判定。
+**turn 生命周期**（`src/do/turns.test.ts`）：保活在仍有 turn 运行时续排；陈旧 turn 被恢复而非判失败；超过时限或恢复次数上限的被放弃，且时限优先于次数；多会话逐个判定。
 
-**turnId**（`test/turns.test.ts`）：只接受小写 UUIDv4；计数器形式的值被拒绝。
+**turnId**（`src/protocol.test.ts`）：只接受小写 UUIDv4；计数器形式的值被拒绝。
 
-**密钥门禁**（`test/auth.test.ts`）：未配置 token 时拒绝一切请求；缺失、格式错误、值错误均 401；token 的前缀与超集都被拒绝，比较为常数时间；错误响应不含 token。
+**密钥门禁**（`src/auth.test.ts`）：未配置 token 时拒绝一切请求；缺失、格式错误、值错误均 401；token 的前缀与超集都被拒绝，比较为常数时间；错误响应不含 token。
 
-**上传**（`test/upload.test.ts`）：multipart 部分写入工作区根；gzip 部分解压后落盘；上传名去掉目录成分。
+**上传**（`src/do/upload.test.ts`）：multipart 部分写入工作区根；gzip 部分解压后落盘；上传名去掉目录成分。
 
 ### 部署后实跑
 
@@ -903,11 +473,11 @@ session 作用域唯一的实质优势是消除竞态，而那个问题由"`POST
 
 **`Last-Event-ID` 依赖客户端正确实现。** 浏览器的 `EventSource` 自动处理，而 iOS 的 `URLSession` 不提供 SSE 解析，重连与 `Last-Event-ID` 都要客户端自己写。这抵消了一部分"协议自带续传"的优势——协议定义了语义，但 iOS 端仍需实现。**它仍比 WebSocket 简单（无握手、无心跳、无二进制帧），但不是零成本。**
 
-**只有一份日志意味着投影逻辑是关键路径。** 客户端历史是 pi 条目的投影，投影出错（例如没剥干净 operating brief、或把内部条目类型透出去）会直接暴露服务端提示词。这类缺陷在测试里容易漏掉，因为它不影响功能。验收标准里为此单列了一条。
+**只有一份日志意味着投影逻辑是关键路径。** 客户端历史目前直接返回 pi 条目，面向用户的投影尚未接入；过滤 operating brief 和内部条目不能当作已实现保证。这类缺陷在测试里容易漏掉，因为它不影响功能。验收标准里为此单列了一条。
 
 **`turnId` 的幂等窗口需要定期清理。** 已结束的 `turnId` 必须保留一段时间才能正确回答重试，但不能无限保留，否则 `turns` 表会单调增长。需要一个保留期（例如 24 小时）与清理路径；清理过早会让一次迟到的重试误开新轮。
 
-**本版本没有鉴权，`userId` 由请求头直接给出且不校验。** 后果是具体的：任何人构造一个请求头即可读取、修改或删除他人的会话与工作区，并以他人身份消耗 LLM 额度。`idFromName(userId)` 是路由的根，因此这不是"少了一层防护"，而是**整个隔离边界建立在一个客户端自称的字符串上**。
+**共享密钥不验证用户身份，`userId` 由请求头直接给出。** 持有 token 的人可以读取、修改或删除任意用户的会话与工作区，并消耗 LLM 额度。`idFromName(userId)` 是路由的根，因此这不是"少了一层防护"，而是**整个隔离边界建立在一个客户端自称的字符串上**。
 
 这是一个有意接受的临时状态，前提是部署不对外公开。**在任何真实用户接触之前必须补上**：鉴权方案本身是一篇独立的提案，需要决定身份来源、令牌形态与轮换方式。
 
@@ -915,7 +485,7 @@ session 作用域唯一的实质优势是消除竞态，而那个问题由"`POST
 
 ## 后果
 
-**换来了什么。** 工具移到服务端后，一轮 turn 不再需要客户端参与即可跑完，客户端断线只是投递问题而非执行问题。协议面收敛为 6 个端点、零开关参数：`POST /prompt` 的响应体本身就是流，`GET /events` 只在重连时用，历史与产物由同一个端点提供。`seq` 是唯一的游标，`stream_end` 是唯一的重连判据。
+**换来了什么。** 工具移到服务端后，一轮 turn 不再需要客户端参与即可跑完，客户端断线只是投递问题而非执行问题。协议面收敛为 6 个端点、零开关参数：`POST /prompt` 的响应体本身就是流，`GET /events` 用于历史读取与重连，历史事件由同一个端点提供，离线产物内容恢复仍有缺口。`seq` 是唯一的游标，`stream_end` 是唯一的重连判据。
 
 **付出了什么。**
 

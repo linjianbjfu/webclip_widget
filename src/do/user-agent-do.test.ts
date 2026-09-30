@@ -1,8 +1,8 @@
 import { env, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
-import type { UserAgentDO } from "../src/do/user-agent-do.ts";
-import { MAX_RECOVERIES, MAX_TURN_MS } from "../src/do/turns.ts";
+import type { UserAgentDO } from "./user-agent-do.ts";
+import { MAX_RECOVERIES, MAX_TURN_MS } from "./turns.ts";
 
 /**
  * Drive the alarm without waiting for one.

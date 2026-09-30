@@ -20,20 +20,16 @@ export interface ProviderConfig {
 }
 
 /**
- * The gateway's GPT-5.6 family, as advertised by its `/v1/models`.
+ * Models registered for the configured gateway.
  *
- * The limits are the gateway's own, not defaults: `contextWindow` is its
- * `max_context_window_tokens` and `maxTokens` its `max_output_tokens`, and
- * their difference is exactly the `max_prompt_tokens` it reports. Both are
- * load-bearing — `contextWindow` sets when pi compacts the history, so a
- * number below the real one throws away context the model could still hold,
- * silently and with no error. `npm run verify-model-limits` reads them back
- * from the gateway and fails on drift.
+ * `contextWindow` determines when pi compacts the conversation; `maxTokens`
+ * bounds the requested output. `npm run verify-model-limits` compares both
+ * with the gateway's advertised limits.
  */
 const MODELS = [
   {
-    id: "gpt-5.6-sol",
-    name: "GPT-5.6 Sol",
+    id: "gpt-6.1-sol",
+    name: "GPT-6.1 Sol",
     reasoning: true,
     input: ["text", "image"] as ("text" | "image")[],
     contextWindow: 1_050_000,

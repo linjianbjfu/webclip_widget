@@ -14,7 +14,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { withWorkspaceShellBrief } from "../src/agent/bash-brief.ts";
+import { withWorkspaceShellBrief } from "./bash-brief.ts";
 
 const stand_in = {
   name: "bash",

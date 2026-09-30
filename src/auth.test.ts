@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { checkAuth } from "../src/auth.ts";
+import { checkAuth } from "./auth.ts";
 
 function request(authorization?: string): Request {
   return new Request("https://x/v1/sessions", {

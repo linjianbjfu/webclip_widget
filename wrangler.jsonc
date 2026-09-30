@@ -16,7 +16,7 @@
   "browser": { "binding": "BROWSER" },
   "vars": {
     "LLM_PROVIDER": "copilot",
-    "DEFAULT_MODEL": "gpt-5.6-sol",
+    "DEFAULT_MODEL": "gpt-6.1-sol",
     "MAX_CONCURRENT_TURNS": "3"
     // LLM_BASE_URL, LLM_API_KEY and AUTH_TOKEN are secrets: they come from
     // .dev.vars locally and from `wrangler secret put` in a deployment.

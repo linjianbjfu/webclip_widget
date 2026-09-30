@@ -6,6 +6,7 @@
     "node": ">=22.6"
   },
   "scripts": {
+    "verify-docs": "node scripts/verify-doc-links.ts",
     "verify-agent-note-classification": "node scripts/verify-agent-note-classification.ts",
     "verify-agent-note-format": "node scripts/verify-agent-note-format.ts",
     "verify-archived-agent-notes": "node scripts/verify-archived-agent-notes.ts",
@@ -15,7 +16,7 @@
     "test:watch": "vitest",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "check": "npm run typecheck && npm run test && npm run verify-model-limits && npm run verify-notes",
+    "check": "npm run typecheck && npm run test && npm run verify-model-limits && npm run verify-notes && npm run verify-docs",
     "types": "wrangler types",
     "e2e": "node cli/index.mjs check",
     "cli": "node cli/index.mjs",

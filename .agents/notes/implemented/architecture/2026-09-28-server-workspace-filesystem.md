@@ -313,7 +313,7 @@ Worker Loader 绑定已在本账号实测可用，不构成障碍。
 
 ## 验证
 
-分层归属见[测试策略](../testing/2026-09-28-test-strategy.md)。下列由 `test/workspace-fs.test.ts`、`test/shell.test.ts` 与 `test/upload.test.ts` 中的自动化用例钉住，全部跑在真实 workerd 内：
+分层归属见[测试策略](../testing/2026-09-28-test-strategy.md)。下列由 `src/fs/workspace-fs.test.ts`、`src/shell/bash.test.ts` 与 `src/do/upload.test.ts` 中的自动化用例钉住，全部跑在真实 workerd 内：
 
 ### 分块存储与 IFileSystem
 

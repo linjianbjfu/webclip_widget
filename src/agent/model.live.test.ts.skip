@@ -16,7 +16,7 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
-import { createModelRuntime, resolveProvider } from "../src/agent/model.ts";
+import { createModelRuntime, resolveProvider } from "./model.ts";
 
 const configured = Boolean(env.LLM_API_KEY && env.LLM_BASE_URL);
 

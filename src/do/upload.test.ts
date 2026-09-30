@@ -1,9 +1,9 @@
 import { env, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
-import type { UserAgentDO } from "../src/do/user-agent-do.ts";
-import { isMultipart, parseMultipartPrompt } from "../src/do/upload.ts";
-import { WorkspaceFs } from "../src/fs/workspace-fs.ts";
+import type { UserAgentDO } from "./user-agent-do.ts";
+import { isMultipart, parseMultipartPrompt } from "./upload.ts";
+import { WorkspaceFs } from "../fs/workspace-fs.ts";
 
 async function gzip(text: string): Promise<Uint8Array> {
   const stream = new Response(text).body!.pipeThrough(new CompressionStream("gzip"));

@@ -1,8 +1,8 @@
 import { env, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
-import type { UserAgentDO } from "../src/do/user-agent-do.ts";
-import { Store } from "../src/do/store.ts";
+import type { UserAgentDO } from "./user-agent-do.ts";
+import { Store } from "./store.ts";
 
 async function withStore<T>(name: string, body: (store: Store) => Promise<T>): Promise<T> {
   const stub = env.AGENT.get(env.AGENT.idFromName(name));

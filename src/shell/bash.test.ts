@@ -1,10 +1,10 @@
 import { env, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
-import type { UserAgentDO } from "../src/do/user-agent-do.ts";
-import { CHUNK_BYTES } from "../src/fs/schema.ts";
-import { WorkspaceFs } from "../src/fs/workspace-fs.ts";
-import { createShell, runShell } from "../src/shell/bash.ts";
+import type { UserAgentDO } from "../do/user-agent-do.ts";
+import { CHUNK_BYTES } from "../fs/schema.ts";
+import { WorkspaceFs } from "../fs/workspace-fs.ts";
+import { createShell, runShell } from "./bash.ts";
 
 async function withShell<T>(
   name: string,

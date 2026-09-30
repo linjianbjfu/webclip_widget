@@ -1,0 +1,90 @@
+# 开发、测试与部署
+
+以下命令在仓库根目录执行。需要满足 [package.json](../package.json) 声明的 Node 版本（≥ 22.6），以及模型网关的地址和凭据。开发服务由 Wrangler 启动。
+
+## 本地运行
+
+```bash
+npm install
+cp .dev.vars.example .dev.vars
+```
+
+在 `.dev.vars` 填入 `LLM_BASE_URL`、`LLM_API_KEY` 和 `AUTH_TOKEN`，然后启动：
+
+```bash
+npm run dev
+```
+
+`AUTH_TOKEN` 是访问本服务的共享密钥，与模型网关的 `LLM_API_KEY` 不同。未配置 `AUTH_TOKEN` 时所有 HTTP 请求返回 503；缺失或错误的 Bearer token 返回 401。客户端接入方式见[协议](protocol.md)。
+
+[wrangler.jsonc](../wrangler.jsonc) 声明 DO、Browser Run 绑定、provider 和默认模型；模型注册表由 [model.ts](../src/agent/model.ts) 维护。`MAX_CONCURRENT_TURNS` 虽已声明，目前执行路径没有读取它，不能据此认为跨会话并发受到限制。
+
+## 验证
+
+| 命令 | 覆盖范围 |
+|---|---|
+| `npm run typecheck` | TypeScript 类型检查 |
+| `npm test` | Workers runtime 中的测试 |
+| `npm run verify-docs` | README、根指令和 docs 中的本地 Markdown 链接目标 |
+| `npm run verify-notes` | Agent Note 分类、格式与归档封存 |
+| `npm run verify-model-limits` | 模型注册表与网关公布的上限 |
+| `npm run check` | 上述检查的串行聚合，任一失败即停止 |
+
+单元与模块集成测试与实现放在一起，命名为 `src/**/<模块>.test.ts`。例如 [store.test.ts](../src/do/store.test.ts) 测试同目录的 Store，[user-agent-do.test.ts](../src/do/user-agent-do.test.ts) 测试 DO alarm 与恢复分支。Vitest 默认发现这些文件，无需维护文件清单。
+
+真实服务端到端检查位于 [cli/checks.mjs](../cli/checks.mjs)。[模型兼容性测试](../src/agent/model.live.test.ts.skip)保留 `.skip` 后缀，不参与默认测试；其 pi 导入与 Workers 测试池的兼容限制尚未解决。
+
+`verify-model-limits` 从环境变量或 `.dev.vars` 读取网关凭据；缺少凭据时输出未检查并以 0 退出。因此 `check` 成功不代表模型上限一定已核验，报告时应单独说明跳过情况。
+
+文档链接检查只检查本地文件或目录是否存在，不检查 URL 可访问性、标题锚点或行为描述。新改的命令与行为需要相应的执行证据；不能运行的部分应在交付时说明原因。
+
+### 真实服务检查
+
+先运行本地服务或准备已部署的服务，再配置 CLI：
+
+```bash
+export WEBCLIP_URL=http://localhost:8787
+export WEBCLIP_USER=me
+# WEBCLIP_TOKEN 设置为服务端 AUTH_TOKEN 的值
+npm run cli -- sessions
+npm run e2e
+```
+
+`sessions` 用于确认认证和路由；新服务的列表为空是正常结果。`e2e` 会创建测试会话、调用真实模型并清理会话，产生模型费用。测试检查认证、SSE 续传、幂等、上传和产物交付；其实现位于 [cli/checks.mjs](../cli/checks.mjs)。
+
+```bash
+WEBCLIP_SLOW=1 npm run e2e
+```
+
+慢检查用于验证客户端消失后的 turn 存活，默认跳过。它要求实际 turn 超过 70 秒；不足时会重试一次，仍不足则失败。等待期间不能向同一个 DO 轮询，否则轮询本身会保活，掩盖问题。本地 workerd 不能证明线上驱逐行为，保活验证需要部署环境。测试层次及覆盖缺口见[测试策略](../.agents/notes/implemented/testing/2026-09-28-test-strategy.md)。
+
+## 浏览器启动排查
+
+本地 `preview_widget` 依赖 Wrangler 下载的 Chrome for Testing。下载解压被中断时，缓存可能只有启动器而缺少 Frameworks，启动会报 `spawn Unknown system error -88`。可以先检查缓存是否完整：
+
+```bash
+find ~/Library/Caches/.wrangler/chrome -type f | wc -l
+```
+
+本项目曾观察到完整缓存有两千余文件，而残缺缓存只有个位数；数量仅用于判断是否明显残缺。确认损坏后删除该浏览器缓存，再启动 `npm run dev` 重新下载，等待解压完成：
+
+```bash
+rm -rf ~/Library/Caches/.wrangler/chrome
+```
+
+工具将浏览器启动失败返回给模型，一次预览失败不直接终止整轮。Chromium 预览不等于 iOS WKWebView 验证；运行环境差异见[架构与限制](architecture.md)。
+
+## 部署
+
+在具备目标 Cloudflare 账户权限的环境执行：
+
+```bash
+npx wrangler secret put AUTH_TOKEN
+npx wrangler secret put LLM_API_KEY
+npx wrangler secret put LLM_BASE_URL
+npm run deploy
+```
+
+不要把这三个 secret 以空值声明在 `wrangler.jsonc` 的 `vars` 中，空值会覆盖 secret。部署后将 `WEBCLIP_URL` 指向返回的服务地址，再运行上述认证与端到端检查。
+
+共享密钥只限制服务访问，不能验证用户身份。持有密钥的人可以指定任意 `x-webclip-user`；真实用户接入前需要独立的身份验证方案。
