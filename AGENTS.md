@@ -10,6 +10,8 @@
   notes/           Agent Notes：决策与提案记录
 .claude/
   skills -> ../.agents/skills    Claude Code 的发现路径
+backend/           Worker 服务端、并置测试、Wrangler 配置与服务端环境变量
+test-cli/          服务端测试客户端与端到端检查
 docs/              使用、协议、架构与开发文档
 scripts/           文档与 Agent Note 门禁脚本（Node 原生跑 .ts，无第三方依赖）
 ```
@@ -54,7 +56,7 @@ scripts/           文档与 Agent Note 门禁脚本（Node 原生跑 .ts，无�
 
 接口、SSE、配置、CLI、部署或可观察行为发生变化时，在同一个改动中更新受影响的文档。先查当前实现与测试，再修改已有正文并同步相关活跃笔记；不要在文末追加与旧说明矛盾的修正。
 
-- [README](README.md) 是项目入口；[开发指南](docs/development.md)拥有运行、测试和部署步骤；[CLI](docs/cli.md)拥有命令用法。
+- [README](README.md) 是项目入口；[开发指南](docs/development.md)拥有运行、测试和部署步骤；[CLI](docs/test-cli.md)拥有命令用法。
 - [客户端协议](docs/protocol.md)拥有 HTTP/SSE 契约；[架构](docs/architecture.md)拥有组件职责与当前限制；Agent Notes 保存理由、替代方案和验证证据。详细事实只维护一份，其余位置链接到它。
 - 新改的命令和行为描述核对实际执行结果。需要凭据或部署而无法验证时，在交付中明确报告；不把设计目标写成已实现行为。
 - 使用 [prose-standard](.agents/skills/prose-standard/SKILL.md) 保留必要契约。移动文档时修复入链，运行 `npm run verify-docs`；改到 Notes 时同时运行 `npm run verify-notes`。
@@ -88,7 +90,9 @@ scripts/           文档与 Agent Note 门禁脚本（Node 原生跑 .ts，无�
 
 ## Conventions
 
-- 单元与模块集成测试放在实现旁，使用 `<模块>.test.ts`；跨服务端到端检查由 `cli/checks.mjs` 承担。
+- 应用依赖与配置由各自目录拥有；根 package.json 通过 npm workspaces 转发后端命令，共享根 package-lock.json。服务端 `.dev.vars*` 只放在 `backend/`，仅示例模板可提交。
+
+- 单元与模块集成测试放在实现旁，使用 `<模块>.test.ts`；跨服务端到端检查由 `test-cli/checks.mjs` 承担。
 
 - 散文和注释陈述完整的契约与上下文，不是推理过程的记录。用直接、具体的词。判断标准见 [prose-standard](.agents/skills/prose-standard/SKILL.md)，清理推理泄漏见 [trim-cot-leakage](.agents/skills/trim-cot-leakage/SKILL.md)。
 - 可机械校验的不变量接进一个实际会执行的顶层门禁，并且证明每一条被改动的验收路径确实会拒绝一个非法输入。

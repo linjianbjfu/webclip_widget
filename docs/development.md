@@ -2,14 +2,22 @@
 
 以下命令在仓库根目录执行。需要满足 [package.json](../package.json) 声明的 Node 版本（≥ 22.6），以及模型网关的地址和凭据。开发服务由 Wrangler 启动。
 
+## 目录与配置归属
+
+[backend/](../backend/) 是 npm workspace，包含服务端源码、并置测试、Wrangler 配置、生成类型和后端专用脚本；依赖声明在 [backend/package.json](../backend/package.json)。根目录维护统一的 package-lock.json，安装在根目录执行。
+
+[test-cli/](../test-cli/) 是无第三方依赖的 Node 客户端，通过 HTTP 访问后端。它使用 `WEBCLIP_URL`、`WEBCLIP_TOKEN`、`WEBCLIP_USER`，不读取后端模型密钥。输入文件路径相对于启动 CLI 的当前目录。
+
+根目录的 dev、test、typecheck、types、deploy 和 verify-model-limits 命令转发到 backend，后端工具的工作目录是 backend。也可以在该目录直接执行对应 npm 命令。未来 iOS 与 Web 应用使用独立目录及配置；共享协议仍由 [protocol.md](protocol.md)维护。
+
 ## 本地运行
 
 ```bash
 npm install
-cp .dev.vars.example .dev.vars
+cp backend/.dev.vars.example backend/.dev.vars
 ```
 
-在 `.dev.vars` 填入 `LLM_BASE_URL`、`LLM_API_KEY` 和 `AUTH_TOKEN`，然后启动：
+[backend/.dev.vars.example](../backend/.dev.vars.example) 是可提交的模板；真实的 `.dev.vars` 及其环境变体被 Git 忽略。在 `backend/.dev.vars` 填入 `LLM_BASE_URL`、`LLM_API_KEY` 和 `AUTH_TOKEN`，然后启动：
 
 ```bash
 npm run dev
@@ -17,7 +25,7 @@ npm run dev
 
 `AUTH_TOKEN` 是访问本服务的共享密钥，与模型网关的 `LLM_API_KEY` 不同。未配置 `AUTH_TOKEN` 时所有 HTTP 请求返回 503；缺失或错误的 Bearer token 返回 401。客户端接入方式见[协议](protocol.md)。
 
-[wrangler.jsonc](../wrangler.jsonc) 声明 DO、Browser Run 绑定、provider 和默认模型；模型注册表由 [model.ts](../src/agent/model.ts) 维护。`MAX_CONCURRENT_TURNS` 虽已声明，目前执行路径没有读取它，不能据此认为跨会话并发受到限制。
+[wrangler.jsonc](../backend/wrangler.jsonc) 声明 DO、Browser Run 绑定、provider 和默认模型；模型注册表由 [model.ts](../backend/src/agent/model.ts) 维护。`MAX_CONCURRENT_TURNS` 虽已声明，目前执行路径没有读取它，不能据此认为跨会话并发受到限制。
 
 ## 验证
 
@@ -30,11 +38,11 @@ npm run dev
 | `npm run verify-model-limits` | 模型注册表与网关公布的上限 |
 | `npm run check` | 上述检查的串行聚合，任一失败即停止 |
 
-单元与模块集成测试与实现放在一起，命名为 `src/**/<模块>.test.ts`。例如 [store.test.ts](../src/do/store.test.ts) 测试同目录的 Store，[user-agent-do.test.ts](../src/do/user-agent-do.test.ts) 测试 DO alarm 与恢复分支。Vitest 默认发现这些文件，无需维护文件清单。
+单元与模块集成测试与实现放在一起，命名为 `backend/src/**/<模块>.test.ts`。例如 [store.test.ts](../backend/src/do/store.test.ts) 测试同目录的 Store，[user-agent-do.test.ts](../backend/src/do/user-agent-do.test.ts) 测试 DO alarm 与恢复分支。Vitest 默认发现这些文件，无需维护文件清单。
 
-真实服务端到端检查位于 [cli/checks.mjs](../cli/checks.mjs)。[模型兼容性测试](../src/agent/model.live.test.ts.skip)保留 `.skip` 后缀，不参与默认测试；其 pi 导入与 Workers 测试池的兼容限制尚未解决。
+真实服务端到端检查位于 [test-cli/checks.mjs](../test-cli/checks.mjs)。[模型兼容性测试](../backend/src/agent/model.live.test.ts.skip)保留 `.skip` 后缀，不参与默认测试；其 pi 导入与 Workers 测试池的兼容限制尚未解决。
 
-`verify-model-limits` 从环境变量或 `.dev.vars` 读取网关凭据；缺少凭据时输出未检查并以 0 退出。因此 `check` 成功不代表模型上限一定已核验，报告时应单独说明跳过情况。
+`verify-model-limits` 从环境变量或 `backend/.dev.vars` 读取网关凭据；缺少凭据时输出未检查并以 0 退出。因此 `check` 成功不代表模型上限一定已核验，报告时应单独说明跳过情况。
 
 文档链接检查只检查本地文件或目录是否存在，不检查 URL 可访问性、标题锚点或行为描述。新改的命令与行为需要相应的执行证据；不能运行的部分应在交付时说明原因。
 
@@ -44,13 +52,13 @@ npm run dev
 
 ```bash
 export WEBCLIP_URL=http://localhost:8787
+export WEBCLIP_TOKEN='替换为 backend/.dev.vars 中 AUTH_TOKEN 的实际值'
 export WEBCLIP_USER=me
-# WEBCLIP_TOKEN 设置为服务端 AUTH_TOKEN 的值
-npm run cli -- sessions
+npm run test-cli -- sessions
 npm run e2e
 ```
 
-`sessions` 用于确认认证和路由；新服务的列表为空是正常结果。`e2e` 会创建测试会话、调用真实模型并清理会话，产生模型费用。测试检查认证、SSE 续传、幂等、上传和产物交付；其实现位于 [cli/checks.mjs](../cli/checks.mjs)。
+`sessions` 用于确认认证和路由；新服务的列表为空是正常结果。`e2e` 会创建测试会话、调用真实模型并清理会话，产生模型费用。测试检查认证、SSE 续传、幂等、上传和产物交付；其实现位于 [test-cli/checks.mjs](../test-cli/checks.mjs)。
 
 ```bash
 WEBCLIP_SLOW=1 npm run e2e
@@ -79,12 +87,12 @@ rm -rf ~/Library/Caches/.wrangler/chrome
 在具备目标 Cloudflare 账户权限的环境执行：
 
 ```bash
-npx wrangler secret put AUTH_TOKEN
-npx wrangler secret put LLM_API_KEY
-npx wrangler secret put LLM_BASE_URL
+npx wrangler secret put --config backend/wrangler.jsonc AUTH_TOKEN
+npx wrangler secret put --config backend/wrangler.jsonc LLM_API_KEY
+npx wrangler secret put --config backend/wrangler.jsonc LLM_BASE_URL
 npm run deploy
 ```
 
-不要把这三个 secret 以空值声明在 `wrangler.jsonc` 的 `vars` 中，空值会覆盖 secret。部署后将 `WEBCLIP_URL` 指向返回的服务地址，再运行上述认证与端到端检查。
+不要把这三个 secret 以空值声明在 `backend/wrangler.jsonc` 的 `vars` 中，空值会覆盖 secret。部署后将 `WEBCLIP_URL` 指向返回的服务地址，再运行上述认证与端到端检查。
 
 共享密钥只限制服务访问，不能验证用户身份。持有密钥的人可以指定任意 `x-webclip-user`；真实用户接入前需要独立的身份验证方案。

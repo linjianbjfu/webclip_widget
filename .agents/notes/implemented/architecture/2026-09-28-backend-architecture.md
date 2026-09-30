@@ -82,7 +82,7 @@ UserAgentDO（idFromName(userId)）
 | 事项 | 做法 | 为什么 |
 |---|---|---|
 | TypeBox JIT | 独立模块里 `Settings.Set({ useAcceleration: false })`，且在任何 pi 模块之前求值 | pi 用 `Compile()` 校验工具参数，内部走 `new Function`，Workers 抛 `Code generation from strings disallowed`，表现为**所有**工具调用失败 |
-| `import.meta.url` | `wrangler.jsonc` 的 `define` 里给一个常量 | pi 的 `config.ts` 在模块作用域调 `fileURLToPath(import.meta.url)`，打包后为 `undefined`，Worker 一启动就崩 |
+| `import.meta.url` | `backend/wrangler.jsonc` 的 `define` 里给一个常量 | pi 的 `config.ts` 在模块作用域调 `fileURLToPath(import.meta.url)`，打包后为 `undefined`，Worker 一启动就崩 |
 | 会话存储 | `SessionManager.inMemory()` + 增量落盘 | Workers 的 `node:fs` 是按请求隔离的内存 VFS，文件版 SessionManager 不可用 |
 | 落盘触发 | 自持 `SessionManager` 引用，在 `message_end` / `turn_end` / `tool_execution_end` / `compaction_end` 后 drain `getEntries()` | `entry_appended` **只在扩展调用 `pi.appendEntry()` 时触发**，不是通用持久化钩子；订阅它会得到一个空的 SQLite |
 | 落盘游标初值 | `history.length > 0 ? getEntries().length : 0` | 每次打开会话 pi 都会写入 `model_change` / `thinking_level_change` 两条引导条目。新会话必须落盘它们，恢复的会话必须跳过。恒为 `length` 会导致恢复时读不到模型与思考等级并静默回退；恒为 0 会每恢复一次重复追加两条 |
@@ -301,7 +301,7 @@ turn 结束后不再续排 alarm，DO 随即进入正常驱逐路径，空闲不
 
 ### 与客户端的通信
 
-HTTP 请求、SSE 载荷、状态码和当前限制由[客户端协议](../../../../docs/protocol.md)维护。本节保存决定这些接口的理由；工作区与存储事实分别见[架构](../../../../docs/architecture.md)和[实现](../../../../src/do/store.ts)。
+HTTP 请求、SSE 载荷、状态码和当前限制由[客户端协议](../../../../docs/protocol.md)维护。本节保存决定这些接口的理由；工作区与存储事实分别见[架构](../../../../docs/architecture.md)和[实现](../../../../backend/src/do/store.ts)。
 
 #### 发起提示与接收合并
 
@@ -421,25 +421,25 @@ session 作用域唯一的实质优势是消除竞态，而那个问题由"`POST
 
 ## 验证
 
-分层归属见[测试策略](../testing/2026-09-28-test-strategy.md)。不依赖 pi 的层由 `src/` 中与实现并置的自动化用例钉住，跑在真实 workerd 内；pi 接入与保活只能由部署后的实跑覆盖。
+分层归属见[测试策略](../testing/2026-09-28-test-strategy.md)。不依赖 pi 的层由 `backend/src/` 中与实现并置的自动化用例钉住，跑在真实 workerd 内；pi 接入与保活只能由部署后的实跑覆盖。
 
 ### 自动化覆盖
 
-**事件日志**（`src/do/store.test.ts`）：`seq` 会话内单调且跨 turn 连续，两个会话的序号空间互不干扰；重建上下文只读 `kind='pi_entry'`，而续传读取全部；批量追加是单个事务——一条无法序列化的载荷使整批不可见，`lastSeq` 不前进；游标返回无缺口无重复。
+**事件日志**（`backend/src/do/store.test.ts`）：`seq` 会话内单调且跨 turn 连续，两个会话的序号空间互不干扰；重建上下文只读 `kind='pi_entry'`，而续传读取全部；批量追加是单个事务——一条无法序列化的载荷使整批不可见，`lastSeq` 不前进；游标返回无缺口无重复。
 
 **turn 表**：已结束的行保留且带 `ended_at`，幂等窗口据此回答迟到的重试；会话繁忙由 `turns` 推导，不存在可漂移的冗余列；陈旧 turn 可被发现，恢复次数递增；清理只删除超过保留期的已结束行。
 
 **恢复**：被中断的 turn 重建上下文时排除自己的记录——`prompt()` 会追加用户消息，否则模型会看到它两次；记录仍留在日志中。
 
-**SSE 与广播**（`src/do/sse.test.ts`、`src/do/hub.test.ts`）：`id:` 只出现在可回放的记录上，增量帧不带因而不推进 `Last-Event-ID`；载荷中的换行不破坏帧结构；补发先于实时送达；两个订阅者收到同一份广播且各自按自身游标补齐；停止读取的订阅者在积压超限后被移除而广播继续；有限流发完即关闭，后续广播到不了它。
+**SSE 与广播**（`backend/src/do/sse.test.ts`、`backend/src/do/hub.test.ts`）：`id:` 只出现在可回放的记录上，增量帧不带因而不推进 `Last-Event-ID`；载荷中的换行不破坏帧结构；补发先于实时送达；两个订阅者收到同一份广播且各自按自身游标补齐；停止读取的订阅者在积压超限后被移除而广播继续；有限流发完即关闭，后续广播到不了它。
 
-**turn 生命周期**（`src/do/turns.test.ts`）：保活在仍有 turn 运行时续排；陈旧 turn 被恢复而非判失败；超过时限或恢复次数上限的被放弃，且时限优先于次数；多会话逐个判定。
+**turn 生命周期**（`backend/src/do/turns.test.ts`）：保活在仍有 turn 运行时续排；陈旧 turn 被恢复而非判失败；超过时限或恢复次数上限的被放弃，且时限优先于次数；多会话逐个判定。
 
-**turnId**（`src/protocol.test.ts`）：只接受小写 UUIDv4；计数器形式的值被拒绝。
+**turnId**（`backend/src/protocol.test.ts`）：只接受小写 UUIDv4；计数器形式的值被拒绝。
 
-**密钥门禁**（`src/auth.test.ts`）：未配置 token 时拒绝一切请求；缺失、格式错误、值错误均 401；token 的前缀与超集都被拒绝，比较为常数时间；错误响应不含 token。
+**密钥门禁**（`backend/src/auth.test.ts`）：未配置 token 时拒绝一切请求；缺失、格式错误、值错误均 401；token 的前缀与超集都被拒绝，比较为常数时间；错误响应不含 token。
 
-**上传**（`src/do/upload.test.ts`）：multipart 部分写入工作区根；gzip 部分解压后落盘；上传名去掉目录成分。
+**上传**（`backend/src/do/upload.test.ts`）：multipart 部分写入工作区根；gzip 部分解压后落盘；上传名去掉目录成分。
 
 ### 部署后实跑
 

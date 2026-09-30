@@ -26,7 +26,7 @@ function credentials(): { baseUrl: string; apiKey: string } | null {
   let apiKey = process.env.LLM_API_KEY;
   if (!baseUrl || !apiKey) {
     try {
-      for (const line of readFileSync(".dev.vars", "utf8").split("\n")) {
+      for (const line of readFileSync(new URL("../.dev.vars", import.meta.url), "utf8").split("\n")) {
         const [key, ...rest] = line.split("=");
         const value = rest.join("=").trim().replace(/^"|"$/g, "");
         if (key.trim() === "LLM_BASE_URL") baseUrl ||= value;
@@ -41,7 +41,7 @@ function credentials(): { baseUrl: string; apiKey: string } | null {
 
 /** Read the declared table out of the source, so the gate has one source. */
 function declared(): Map<string, { contextWindow: number; maxTokens: number }> {
-  const source = readFileSync("src/agent/model.ts", "utf8");
+  const source = readFileSync(new URL("../src/agent/model.ts", import.meta.url), "utf8");
   const table = new Map<string, { contextWindow: number; maxTokens: number }>();
   const entry =
     /id:\s*"([^"]+)"[\s\S]*?contextWindow:\s*([\d_]+)[\s\S]*?maxTokens:\s*([\d_]+)/g;

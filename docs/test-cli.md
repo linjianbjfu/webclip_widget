@@ -4,20 +4,24 @@ CLI 用于驱动服务端和执行端到端检查。先完成[本地运行](deve
 
 ```bash
 export WEBCLIP_URL=http://localhost:8787
+export WEBCLIP_TOKEN='替换为 backend/.dev.vars 中 AUTH_TOKEN 的实际值'
 export WEBCLIP_USER=me
-# WEBCLIP_TOKEN 设置为服务端 AUTH_TOKEN 的值
+```
 
-npm run cli -- new "某个页面"          # 建会话
-npm run cli -- prompt "…"              # 跑一轮，流式打印；会话自动建
-npm run cli -- prompt <session> "…"    # 接着某个会话跑
-echo "你好啊" | npm run cli -- chat     # 一句话就说完，会话自动建
-npm run cli -- chat                    # 连续对话，每行一轮
-npm run cli -- chat <session>          # 接着已有会话聊
-npm run cli -- events <session> 0      # 回放并跟随
-npm run cli -- timeline <session>      # 这一轮的时间花在哪
-npm run cli -- sessions                # 列表
-npm run cli -- abort <session>
-npm run cli -- rm <session>           # 删除会话
+连接本地服务也需要 `WEBCLIP_TOKEN`。将上面的占位文字替换为 `backend/.dev.vars` 中的真实 `AUTH_TOKEN`；连接远端时使用远端服务配置的 `AUTH_TOKEN`。test-cli 不会自动读取 `.dev.vars`，也不使用模型网关的 `LLM_API_KEY`。这些环境变量在执行命令的同一个终端中设置。
+
+```bash
+npm run test-cli -- new "某个页面"          # 建会话
+npm run test-cli -- prompt "…"              # 跑一轮，流式打印；会话自动建
+npm run test-cli -- prompt <session> "…"    # 接着某个会话跑
+echo "你好啊" | npm run test-cli -- chat     # 一句话就说完，会话自动建
+npm run test-cli -- chat                    # 连续对话，每行一轮
+npm run test-cli -- chat <session>          # 接着已有会话聊
+npm run test-cli -- events <session> 0      # 回放并跟随
+npm run test-cli -- timeline <session>      # 这一轮的时间花在哪
+npm run test-cli -- sessions                # 列表
+npm run test-cli -- abort <session>
+npm run test-cli -- rm <session>           # 删除会话
 ```
 
 `chat` 里以 `/` 开头的行是命令，其余按原文发送；想发以斜杠开头的文本就写 `//`。
@@ -36,14 +40,14 @@ npm run cli -- rm <session>           # 删除会话
 | `/rm [session]` | 删除会话，默认当前 |
 | `/quit` | 退出 |
 
-交互命令与别名以 `/help` 为准，它由 [CLI 的命令定义](../cli/index.mjs)生成。切换会话会把游标归零：序号只在产生它的那条日志里有意义。
+交互命令与别名以 `/help` 为准，它由 [CLI 的命令定义](../test-cli/index.mjs)生成。切换会话会把游标归零：序号只在产生它的那条日志里有意义。
 
 
-**首轮带上网页与截图**：
+**首轮带上网页与截图**：仓库提供 [HTML 样例](../test-cli/fixtures/source.html)，截图需要自行准备；也可以把两处路径替换为自己的文件。
 
 ```bash
-npm run cli -- prompt \
-  --file ./source.html --file ./screenshot.png --gzip \
+npm run test-cli -- prompt \
+  --file ./test-cli/fixtures/source.html --file ./screenshot.png --gzip \
   "读 source.html，把报价做成 widget"
 ```
 

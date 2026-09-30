@@ -16,7 +16,7 @@ Status: implemented
 
 三层，各自有明确的归属判据，加一个贯穿其中的 CLI。
 
-三层都已建成：71 条用例跑在 Workers runtime 内（`npm test`），10 条端到端检查打真实服务与真实模型（`npm run e2e`），而 `cli/` 下的客户端同时是那些检查的夹具与 iOS app 就绪前驱动服务端的手段。
+三层都已建成：并置于 `backend/src/` 的用例跑在 Workers runtime 内（`npm test`），10 条端到端检查打真实服务与真实模型（`npm run e2e`），而 `test-cli/` 下的客户端同时是那些检查的夹具与 iOS app 就绪前驱动服务端的手段。
 
 | 层 | 跑在哪 | 承担什么 | 花钱 | 期望时长 |
 |---|---|---|---|---|

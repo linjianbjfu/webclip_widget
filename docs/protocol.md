@@ -1,6 +1,6 @@
 # HTTP 与 SSE 客户端协议
 
-本文描述当前服务端对外行为，供 iOS 和 CLI 客户端接入。请求路由由 [router.ts](../src/router.ts) 和 [handlers.ts](../src/do/handlers.ts) 实现，公共载荷类型见 [protocol.ts](../src/protocol.ts)。SSE 的选择理由与幂等设计见[后端架构决策](../.agents/notes/implemented/architecture/2026-09-28-backend-architecture.md)。
+本文描述当前服务端对外行为，供 iOS 和 CLI 客户端接入。请求路由由 [router.ts](../backend/src/router.ts) 和 [handlers.ts](../backend/src/do/handlers.ts) 实现，公共载荷类型见 [protocol.ts](../backend/src/protocol.ts)。SSE 的选择理由与幂等设计见[后端架构决策](../.agents/notes/implemented/architecture/2026-09-28-backend-architecture.md)。
 
 ## 认证与寻址
 
@@ -131,4 +131,4 @@ GET /v1/sessions/{id}/events?since=41
 
 ## 当前接入限制
 
-除上面的认证、产物恢复和取消限制外，[Hub](../src/do/hub.ts) 每个订阅者最多排队 64 次未完成写入，历史补发也经过此队列。大量积压可能截断回放并遗漏 `stream_end`；客户端重连不能替代服务端对长历史交付的修复。生产接入需验证长会话、后台恢复和真实 WKWebView 行为。
+除上面的认证、产物恢复和取消限制外，[Hub](../backend/src/do/hub.ts) 每个订阅者最多排队 64 次未完成写入，历史补发也经过此队列。大量积压可能截断回放并遗漏 `stream_end`；客户端重连不能替代服务端对长历史交付的修复。生产接入需验证长会话、后台恢复和真实 WKWebView 行为。

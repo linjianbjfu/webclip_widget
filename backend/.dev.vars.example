@@ -1,0 +1,7 @@
+# 复制为 .dev.vars（已被 gitignore）并填入真实值。
+# 部署时改用 `wrangler secret put`，不要写进 wrangler.jsonc 的 vars。
+
+LLM_BASE_URL=https://your-gateway/v1
+LLM_API_KEY=sk-...
+# 在实际的 .dev.vars 中填写共享密钥；模板留空。未配置时服务拒绝所有请求。
+AUTH_TOKEN=
