@@ -114,6 +114,34 @@ GET /v1/sessions/{id}/events?since=41
 
 事件日志只保存 `path`、`bytes`、`sha256`，**历史回放不会补上 `content`**。服务端也没有独立的文件下载端点。因此客户端需要在实时接收时保存产物；错过实时结果或换设备后，目前不能仅靠历史接口取回文件内容。二进制产物不能依赖 UTF-8 `content` 无损交付。
 
+### Widget 文件与截图
+
+widget 构建的交付文件为 `out/extra.js`、`out/widget.html`、`out/meta.json`。普通对话不要求产生文件；`reason: completed` 表示 turn 执行结束，不代表所有 widget 质量检查通过。传输层仍收集 `/out` 的直接子文件，三文件要求由 prompt、预览和 CLI 保存校验执行。
+
+`meta.json` 只有 `size`，例如 `{"size":"middle"}`，有效值为 `small`、`middle`、`large`。明确指定尺寸时遵从用户；首次没有指定时，模型按所需内容选择能清晰呈现的最小尺寸，后续修改保留该尺寸，除非用户或内容需求改变。自动选择是模型判断，不保证每次任务得到相同档位。
+
+| size | 参考预览画布（CSS px） | 常见内容 |
+|---|---|---|
+| small | 160 × 160 | 单个指标、状态或简短摘要 |
+| middle | 344 × 160 | 多个指标、紧凑对比或少量条目 |
+| large | 344 × 360 | 较长列表或多个内容组 |
+
+尺寸由 [widget-contract.ts](../backend/src/widget-contract.ts) 定义，是项目预览基准。HTML 自适应客户端实际 viewport；客户端选择对应的 iOS widget family，设置 WebView 画布与截图缩放倍率。`#widget-root` 从 `(0, 0)` 铺满画布，不靠滚动展示内容，也不以三档基准值硬编码根宽高。
+
+`extra.js` 是可直接执行的同步脚本，整个文件采用立即执行函数表达式（IIFE），例如 `(() => { /* 从 document 提取 */ return data; })()`。客户端执行整份脚本后直接得到 JSON 对象，不需要先注册函数、传参或再调用命名函数。返回对象本身，不返回 JSON 字符串、Promise、函数或 DOM 节点；内部字段只使用 JSON 值，缺值用 null，保留数值零。
+
+脚本直接读取源网页的 `document`，变量留在 IIFE 内，可重复执行。它不修改网页、不发网络请求、不执行捕获 HTML 中的脚本，也不负责写文件；客户端将执行结果序列化为 data.json。
+
+`widget.html` 使用内嵌 CSS 和 JS，定义同步函数 `window.renderWidget(data)`。每次调用替换当前内容；数据结构由同一 bundle 的提取和渲染脚本共同约定。页面每次加载时通过 `fetch('./data.json', { cache: 'no-store' })` 获取同目录数据，检查 HTTP 状态、解析 JSON 后渲染。HTML 不内嵌捕获数据或使用写死的数值兜底；源文本作为文本写入 DOM，widget 页面不加载 `extra.js`。
+
+客户端在原网页 WebView 中直接执行 `extra.js` 的完整内容，将执行返回的对象序列化为同目录的 `data.json`。随后启动本地 HTTP server，以 HTTP URL 打开 `widget.html`。`data.json` 是客户端运行时文件，不属于服务端交付的三个文件；下载 HTML 后仅用 file:// 打开不属于受支持的数据加载流程。
+
+HTML 在同步初始化时公开 `window.widgetReady` Promise，只有数据请求、JSON 解析和渲染完成后才 resolve。HTTP、网络、JSON 或渲染失败时，在原尺寸内显示静态错误状态并 reject，不能回退到捕获时的数据；页面附加 rejection handler，避免未处理异常，同时保持该 Promise 的拒绝状态。客户端等待 `widgetReady` 成功以及字体、图片加载完成后截图。刷新由客户端更新文件并重新加载页面触发，不轮询、不自动重试。
+
+生成页面用于静态截图：禁止 CSS/JS/SVG 动画、过渡、动图、视频、定时刷新或依赖点击、hover、滚动的内容。除同目录 data.json 外，所需样式、脚本和静态图片均内嵌，不依赖远程资源。
+
+`preview_widget` 在独立浏览器页面中用 DOMParser 解析 `/source.html`，将捕获文档绑定为 document，直接求值整份 extra.js 并读取完成值，将结果作为同源 `/data.json` 的 HTTP 响应。预览按 metadata 设置画布，等待 widgetReady（最多 15 秒），要求实际发生数据请求，再检查数据渲染一致性、重复渲染、根边界、溢出和可检测的动画声明。截图保留页面实际加载后的状态，后续诊断调用不能替页面补好截图。完整提取 JSON 写到工作区 `/widget-preview-data.json` 供模型检查字段，该临时文件不交付。单次预览不能穷尽任意 JS 定时行为或动图，也不能证明每个字段都来自正确的源区域；Chromium 结果不能替代 WKWebView 真机验证。
+
 ### 错误与中止
 
 流开始前的请求错误通过 HTTP 状态返回；流中的执行错误通过 `error` 返回。当前执行失败路径随后发送失败的 `turn_end`，最后发送 `stream_end`。

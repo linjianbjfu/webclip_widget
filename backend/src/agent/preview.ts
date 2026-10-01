@@ -1,134 +1,30 @@
-/**
- * `preview_widget` — render the generated widget and report what went wrong.
- *
- * `extra.js` runs in a browser, not in Node, so `node --check` would validate
- * the wrong parser and catch only syntax errors. This project's real failure
- * mode is a selector resolving to null, which only a render exposes. One call
- * therefore returns three things: a deterministic syntax verdict, the runtime
- * and load errors the page produced, and a screenshot.
- *
- * Requests are intercepted so `<script src="extra.js">` resolves from the
- * workspace: the page is rendered as the files actually are, rather than from
- * a string assembled here, which would not exercise the reference at all.
- * Paths outside the workspace — `/favicon.ico` above all — answer 204 rather
- * than aborting, because an aborted request surfaces as a `requestfailed`
- * entry and a console error, and the model would read that as a fault in its
- * own widget.
- */
-
+/** Validate the widget bundle and run extraction and rendering in Browser Run. */
 import puppeteer from "@cloudflare/puppeteer";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-
 import type { WorkspaceFs } from "../fs/workspace-fs.ts";
 import { OUT_DIR } from "../shell/bash.ts";
+import { parseWidgetMeta, validateWidgetPaths } from "../widget-contract.ts";
+import { renderWidgetPreview } from "./preview-render.ts";
 
-/** Idle timeout for the browser instance. Upstream caps it at ten minutes. */
-const BROWSER_KEEP_ALIVE_MS = 600_000;
-const NAV_TIMEOUT_MS = 15_000;
-const ORIGIN = "https://widget.local";
-const MAX_ERRORS = 25;
+const EXTRACTED_PATH = "/widget-preview-data.json";
 
-export interface PreviewResult {
-  syntaxError: string | null;
-  errors: string[];
-  text: string;
-  screenshotBytes: number;
-  screenshotBase64: string;
-}
-
-function mimeFor(path: string): string {
-  if (path.endsWith(".js")) return "text/javascript";
-  if (path.endsWith(".css")) return "text/css";
-  if (path.endsWith(".json")) return "application/json";
-  return "text/html";
-}
-
-export async function renderPreview(
-  browserBinding: BrowserRun,
-  fs: WorkspaceFs,
-  entry = "widget.html",
-): Promise<PreviewResult> {
-  const browser = await puppeteer.launch(browserBinding, { keep_alive: BROWSER_KEEP_ALIVE_MS });
+export async function renderPreview(browserBinding: BrowserRun, fs: WorkspaceFs) {
+  const entries = await fs.readdirWithFileTypes(OUT_DIR);
+  validateWidgetPaths(entries.map(entry => `out/${entry.name}`));
+  if (entries.some(entry => !entry.isFile)) throw new Error("Widget artifacts must be files");
+  const { size } = parseWidgetMeta(await fs.readFile(`${OUT_DIR}/meta.json`));
+  const [html, extra, source] = await Promise.all([
+    fs.readFile(`${OUT_DIR}/widget.html`), fs.readFile(`${OUT_DIR}/extra.js`), fs.readFile("/source.html"),
+  ]);
+  const browser = await puppeteer.launch(browserBinding, { keep_alive: 600_000 });
   try {
-    const page = await browser.newPage();
-    const errors: string[] = [];
-    const note = (line: string): void => {
-      if (errors.length < MAX_ERRORS) errors.push(line);
-    };
-
-    page.on("pageerror", error => note(`uncaught: ${String(error.message).slice(0, 200)}`));
-    page.on("console", message => {
-      if (message.type() === "error") note(`console: ${message.text().slice(0, 200)}`);
-    });
-    page.on("requestfailed", request => note(`failed: ${new URL(request.url()).pathname}`));
-
-    await page.setRequestInterception(true);
-    page.on("request", request => {
-      const path = new URL(request.url()).pathname;
-      const workspacePath = `${OUT_DIR}${path}`;
-      void (async () => {
-        try {
-          if (await fs.exists(workspacePath)) {
-            const body = await fs.readFile(workspacePath);
-            await request.respond({ status: 200, contentType: mimeFor(path), body });
-            return;
-          }
-          // Not part of the widget: answer empty rather than abort, so the
-          // browser's own probes do not pollute the error list.
-          await request.respond({ status: 204, body: "" });
-        } catch {
-          await request.respond({ status: 500, body: "" });
-        }
-      })();
-    });
-
-    await page.goto(`${ORIGIN}/${entry}`, { waitUntil: "load", timeout: NAV_TIMEOUT_MS });
-
-    // The page's own parser gives a verdict that does not depend on how a
-    // parse failure happens to surface as an event.
-    const extraPath = `${OUT_DIR}/extra.js`;
-    const syntaxError = (await fs.exists(extraPath))
-      ? await page.evaluate((source: string) => {
-          try {
-            new Function(source);
-            return null;
-          } catch (error) {
-            return String((error as Error).message);
-          }
-        }, await fs.readFile(extraPath))
-      : null;
-
-    // Runs in the page, where `document` exists; this project's lib does not
-    // include DOM types because the Worker itself has no document.
-    const text = await page.evaluate(
-      "document.body ? document.body.innerText.slice(0, 2000) : ''",
-    ) as string;
-    const shot = (await page.screenshot({ type: "png" })) as Uint8Array;
-    await page.close();
-
-    return {
-      syntaxError,
-      errors,
-      text,
-      screenshotBytes: shot.byteLength,
-      screenshotBase64: btoa(String.fromCharCode(...shot)),
-    };
+    const result = await renderWidgetPreview(browser, { html, extra, source, size });
+    if (result.extractedData !== null) await fs.writeFile(EXTRACTED_PATH, result.extractedData);
+    return result;
   } finally {
-    // `disconnect`, not `close`: the instance stays warm for the next call in
-    // this turn instead of paying a cold start each time.
-    try {
-      await browser.disconnect();
-    } catch {
-      // Already gone; nothing further to release.
-    }
+    await browser.disconnect();
   }
-}
-
-/** The one line of a launch failure worth showing the model. */
-function reason(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return (message.split("\n")[0] ?? "").slice(0, 200);
 }
 
 export function createPreviewTool(browserBinding: BrowserRun, fs: WorkspaceFs) {
@@ -136,39 +32,35 @@ export function createPreviewTool(browserBinding: BrowserRun, fs: WorkspaceFs) {
     name: "preview_widget",
     label: "Preview widget",
     description:
-      "Render out/widget.html in a real browser. Returns syntax errors from the browser's own " +
-      "parser, uncaught runtime errors, failed resource loads, and the rendered text. Use this " +
-      "instead of node to check generated JavaScript.",
-    promptSnippet: "preview_widget — render the widget and report syntax, runtime and load errors",
-    parameters: Type.Object({
-      entry: Type.Optional(
-        Type.String({ description: "Entry file under out/, default widget.html" }),
-      ),
-    }),
-    async execute(_toolCallId, params) {
-      let result: PreviewResult;
+      "Check the three out/ artifacts, evaluate extra.js directly against source.html and use its returned object without executing captured scripts, " +
+      "serve the result as data.json and wait for widgetReady at the meta.json size. Returns loading, syntax/runtime/resource errors, data " +
+      "mismatches, viewport/root bounds, overflow and motion findings, text and a screenshot. " +
+      `Extracted JSON is saved to ${EXTRACTED_PATH}; read it to check the extractor/renderer data fields.`,
+    promptSnippet: "preview_widget — verify data.json loading, extraction and static layout at the selected size",
+    parameters: Type.Object({}),
+    async execute() {
+      let result;
       try {
-        result = await renderPreview(browserBinding, fs, params.entry ?? "widget.html");
+        result = await renderPreview(browserBinding, fs);
       } catch (error) {
-        // A browser that will not start is an environment fact, not something
-        // the model can repair. Pi would otherwise hand it the raw Node stack,
-        // which fills the context with local paths and suggests no next step.
-        return {
-          content: [{ type: "text" as const, text: `preview unavailable: ${reason(error)}` }],
-          isError: true,
-          details: undefined,
-        };
+        // Pi marks thrown failures as tool errors; an isError return property is ignored.
+        throw new Error(`preview failed: ${String(error).split("\n")[0]?.slice(0, 300)}`);
       }
+      const valid = result.syntaxError === null && result.errors.length === 0;
       const lines = [
+        `validation: ${valid ? "passed" : "failed"}`,
+        `size: ${result.size}; viewport: ${result.viewport.width}x${result.viewport.height}; root: ${JSON.stringify(result.root)}`,
         result.syntaxError ? `syntax error in extra.js: ${result.syntaxError}` : "syntax: ok",
-        result.errors.length > 0 ? `errors:\n${result.errors.join("\n")}` : "errors: none",
+        result.errors.length ? `errors:\n${result.errors.join("\n")}` : "errors: none",
         `rendered text: ${result.text.slice(0, 500)}`,
-        `screenshot: ${result.screenshotBytes} bytes`,
+        result.extractedData === null ? "extraction: failed" : `extracted data: ${EXTRACTED_PATH}`,
       ];
       return {
-        content: [{ type: "text" as const, text: lines.join("\n") }],
-        isError: result.syntaxError !== null || result.errors.length > 0,
-        details: undefined,
+        content: [
+          { type: "text" as const, text: lines.join("\n") },
+          { type: "image" as const, data: result.screenshotBase64, mimeType: "image/png" },
+        ],
+        details: { valid },
       };
     },
   });

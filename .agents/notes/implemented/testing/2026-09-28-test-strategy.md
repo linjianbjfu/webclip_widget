@@ -80,6 +80,16 @@ Browser Run 是个例外：`wrangler dev` 会在本地起 headless Chrome，因�
 
 可行的缓解是把不依赖 pi 的部分——存储、SSE 编帧、广播、文件系统、shell——与 pi 接入切开，前者仍由集成层覆盖。
 
+### SDK、CLI 文件与静态 widget 浏览器测试
+
+`npm run test:agent` 在 Node 中调用真实 pi SDK，验证 resource loader 加载系统提示词以及 read/edit 工具的 UTF-8 字节处理。测试未替换 SDK，仍不承担 Workers 平台语义。
+
+CLI 的文件系统行为由 Node 内置测试运行器执行，`test-cli/*.test.mjs` 使用私有临时目录；命令入口测试绑定随机 loopback 端口，驱动真实子进程并验证文件和退出状态。它不替代 Workers SQLite 测试。`npm run test:cli` 接入根 `check`。
+
+`preview-render.browser.test.mjs` 使用真实本地 Chrome，测试与生产共享的提取及渲染执行器；Workers Vitest 明确排除此文件，避免把 Node 进程启动测试装入 Workers。`npm run test:browser` 接入根 `check`，缺少 Chrome 时失败。每次测试原子分配独立浏览器配置目录和调试端口，结束后等待进程退出。
+
+真实模型的尺寸选择与 Browser Run 工具链由 `npm run e2e:widgets` 验证，使用固定 HTML 并单独计费。三文件与静态截图的理由见[静态 widget 决策](../feature/2026-09-30-static-ios-widget-artifacts.md)。
+
 ### 截图不做像素断言
 
 `preview_widget` 返回截图、错误列表和 DOM 文本三样，**断言只写在后两样上**。字体渲染、抗锯齿、Chromium 版本都会让像素漂移，像素断言会变成一个周期性误报的来源，最终被人为忽略——那比没有断言更糟。

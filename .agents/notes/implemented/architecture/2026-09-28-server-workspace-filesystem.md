@@ -14,7 +14,7 @@ webclip_widget 的服务端要把 pi coding agent 跑在 Cloudflare Workers 上�
 
 1. **workspace 放哪。** 工具要读写文件，Workers 的 `node:fs` 是按请求隔离的内存 VFS，写进 `/tmp` 的东西在下一个请求里就不存在了。需要一个真正持久、且能被工具访问的文件系统。
 2. **`grep` / `rg` / `find` 怎么实现。** pi 的 grep 实现在任何情况下都会 spawn ripgrep，`GrepOperations` 这个 seam 只提供 `isDirectory` / `readFile` 给上下文行用，拦不住搜索本身。服务端没有进程可以 spawn。
-3. **生成结果怎么验证。** 模型写完 `extra.js` 和 `widget.html` 之后需要知道它对不对。习惯性的做法是 `node --check`，而 Workers 里没有 node，这会把 Cloudflare Sandbox（Containers）拉进依赖。下面论证这条路径在本 workload 下是错的。
+3. **生成结果怎么验证。** 模型写完 `extra.js`、`widget.html` 和 `meta.json` 之后需要知道它对不对。习惯性的做法是 `node --check`，而 Workers 里没有 node，这会把 Cloudflare Sandbox（Containers）拉进依赖。下面论证这条路径在本 workload 下是错的。
 
 ### workspace 的实际形状
 
@@ -23,7 +23,7 @@ webclip_widget 的服务端要把 pi coding agent 跑在 Cloudflare Workers 上�
 | | 内容 | 量级 |
 |---|---|---|
 | 输入 | 一个网页的 source 与截图 | source 单文件、**可能超过 1 MB**；随首轮 prompt 以 multipart 上传 |
-| 输出 | `out/extra.js` + `out/widget.html` | 各几十 KB，写在约定的 `/out` 目录下 |
+| 输出 | `out/extra.js` + `out/widget.html` + `out/meta.json` | 各几十 KB，写在约定的 `/out` 目录下 |
 | 中间产物 | 选区 manifest 等 | 小 |
 | 验证产物 | 渲染截图 | 每次迭代一张，几百 KB |
 
@@ -115,66 +115,25 @@ Cloudflare Workers 既不是 Node 也不是浏览器，但其 API 面更接近�
 | `test` / `[ ]` | 可用（shell builtin，不在 PATH 上） |
 | `js-exec`（QuickJS）、`python3`、`sqlite3`、`curl` | **不可用** |
 
-后果是模型**无法写一个 JS 或 Python 脚本来转换 HTML**，只能用 `sed` / `awk` / `jq` / `grep` 这套文本工具。对本 workload（读 HTML、抽字段、写两个文件）够用，但必须在系统提示词里写明，否则模型会依次尝试 `node`、`js-exec`、`python3`，每次失败烧掉一轮。
+后果是模型**无法写一个 JS 或 Python 脚本来转换 HTML**，只能用 `sed` / `awk` / `jq` / `grep` 这套文本工具。对本 workload（读 HTML、抽字段、写三个文件）够用，但必须在系统提示词里写明，否则模型会依次尝试 `node`、`js-exec`、`python3`，每次失败烧掉一轮。
 
 选 just-bash 是因为它正好就是这个形状：纯 TypeScript 的 bash 解释器 + 可插拔文件系统，命令表里已经有 `grep`（含 `egrep`/`fgrep`）、`rg`、`find`、`sed`、`awk`、`jq`、`head`、`tail`、`wc`、`sort`、`cut`、`tr`、`xargs`，以及管道、重定向、`&&`/`||`、变量展开、glob、函数和循环。Node bundle 是 510 KB（另有按需加载的 chunk，合计 6.4 MB），远低于 Workers 的 64 MiB 脚本上限；bundle 里 `new Function` 和 `eval(` 各出现 **0 次**，不会撞上 edge-mac-widget 踩过的 `Code generation from strings disallowed` 那个坑。`undici` 那个 508 KB 的 chunk 是 Node 的 HTTP 客户端，Workers 上应当排除。
 
 ### 验证用浏览器而不是 node
 
-模型写完两个文件后需要知道结果对不对。直觉做法是 `node --check extra.js`，那会把 Sandbox 拉进依赖。这条路径在本 workload 下是错的，三条理由：
+模型写完三个文件后需要知道结果对不对。直觉做法是 `node --check extra.js`，那会把 Sandbox 拉进依赖。这条路径在本 workload 下是错的，三条理由：
 
 - **验错了解析器。** `extra.js` 的运行环境是浏览器，不是 Node。两者的 module/script 语义和顶层 await 可用性都不同，而 Node 对 DOM 一无所知。
 - **只覆盖语法。** 本项目真正的失败模式是 `querySelector` 返回 null、XPath 在抓取内容里不成立——edge-mac-widget 用一整节记录了这类问题。`node --check` 一个都抓不到。
 - **浏览器这一趟本来就要跑。** 用户要求渲染生成的 widget 并截图看效果，那次渲染会同时暴露语法错误、运行时错误和视觉结果。
 
-因此不引入 Sandbox，而是提供一个 `preview_widget` 自定义工具，一次调用返回全部三样：
+因此不引入 Sandbox，而是提供 `preview_widget` 工具。它先校验三文件和 metadata，再在独立浏览器页面中用 DOMParser 解析源 HTML，将捕获文档绑定为 document，执行完整的 `extra.js` 并读取返回对象。源 HTML 中的脚本不执行。widget 页面加载 `widget.html` 并通过同源 data.json 请求取得提取结果，按 metadata 设置 viewport 后等待 widgetReady。
 
-```ts
-const errors = [];
-page.on("pageerror",     e => errors.push(`uncaught: ${e.message}`));
-page.on("console",       m => m.type() === "error" && errors.push(`console: ${m.text()}`));
-page.on("requestfailed", r => errors.push(`failed: ${r.url()}`));
+预览返回语法、运行、加载错误，已加载数据与提取结果的文本差异，根边界、溢出与动画检查，以及截图。提取 JSON 保存在交付目录之外供模型检查字段。产物接口与尺寸规则由[静态 widget 决策](../feature/2026-09-30-static-ios-widget-artifacts.md)拥有；本篇仍拥有服务端存储与浏览器执行的选择。
 
-// 请求拦截让 <script src="extra.js"> 从 L1 解析：渲染的是文件真实的样子，
-// 而不是把两个文件拼成一段 HTML 喂进去。
-await page.setRequestInterception(true);
-page.on("request", req => req.respond(readFromWorkspace(req.url())));
-await page.goto("https://widget.local/widget.html");
+请求拦截为 `https://widget.local/widget.html` 提供工作区 HTML，为 data.json 提供提取 JSON，并允许内嵌 data/blob 资源；其他资源请求报告错误，避免下载后的三文件依赖未交付文件或外部网络。`/favicon.ico` 单独响应 204，防止浏览器的自动探测污染错误列表。
 
-// 用浏览器自己的解析器做确定性语法检查，不依赖解析错误如何冒泡成事件。
-// 这个 new Function 在页面上下文里执行，不受 Workers 的代码生成限制约束。
-const syntax = await page.evaluate(src => {
-  try { new Function(src); return null } catch (e) { return e.message }
-}, extraJs);
-
-const shot = await page.screenshot();
-```
-
-`pageerror` / `console` / `requestfailed` / `setRequestInterception` / `respond` / `screenshot` 均已在 `@cloudflare/puppeteer@1.4.0` 的类型定义中确认存在。**以 npm 上的版本为准，不要照 Browser Run 文档锁版本**——该页（更新于 2026-04-21）仍称当前版本为 1.1.0 / Puppeteer 22.13.1，而 npm 上已是 1.4.0；上述 API 是对 1.4.0 验证的。
-
-浏览器生命周期用 `keep_alive` 而非 alarm：
-
-```js
-const browser = await puppeteer.launch(env.BROWSER, { keep_alive: 600000 })  // 上限 10 分钟
-```
-
-这是**空闲**超时而非会话上限（默认 1 分钟，可配到 10 分钟），只要有命令进来就持续存活。一次 turn 内两次 `preview_widget` 的间隔几乎不可能超过 10 分钟，因此浏览器实例在 turn 内无需额外保活动作。
-
-**注意这与 Durable Object 的保活是两件不同的事。** `keep_alive` 只延长 Browser Run 侧浏览器实例的存活，对 DO 自身的驱逐计时器没有任何影响——DO 仍需依靠[后端架构篇](2026-09-28-backend-architecture.md)描述的保活 alarm。两者名字相近但作用于不同的对象，不要互相替代。
-
-跨 turn 复用走会话而非 alarm：`browser.disconnect()`（不是 `close()`）保留会话，下次用 `puppeteer.sessions(env.BROWSER)` 列出空闲会话并 `puppeteer.connect(env.BROWSER, sessionId)` 接上，失败再 `launch`。Workers Paid 档每账号并发 200 个实例、每秒新建 3 个。
-
-**请求拦截已在生产实测通过。** `goto("https://widget.local/widget.html")` 配合 `setRequestInterception(true)` 返回 `200`——拦截在 DNS 解析之前生效，不可解析的域名不构成问题。同一次实测还确认：
-
-- `/widget.html` 与 `/extra.js` 均从工作区提供
-- `<script src="extra.js">` **真实加载并执行**（页面文本被该脚本改写，证明走的是解析路径而非拼接）
-- 引用一个不存在的文件产生 `requestfailed` 事件
-- 页面内 `new Function(src)` 捕获到故意注入的语法错误
-- 截图正常返回（8,051 字节 PNG）
-
-因此不需要 `setContent` + `addScriptTag` 的退路，"能测到 `<script src>` 真实解析"这项能力得以保留。
-
-**但拦截器必须处理 `/favicon.ico`。** 浏览器会自动请求它，而工作区里没有；不特殊处理的话它会以一条 `requestfailed` 加一条 `console` 错误的形式进入错误列表，让模型误以为 widget 有问题。对工作区之外的路径应静默响应 `204`，而不是 `abort()`——后者正是产生噪声的原因。
+每次预览分配独立 browser context，结束时关闭该 context 及所有页面；浏览器连接在 finally 中断开。`keep_alive: 600000` 控制 Browser Run 实例的空闲超时，不是本地 DO 的保活机制，也不意味着当前实现跨调用复用了浏览器会话。DO 的保活仍由[后端架构](2026-09-28-backend-architecture.md)中的 alarm 承担。
 
 ### 挡住模型去敲 node
 
@@ -190,11 +149,7 @@ it renders the widget, reports syntax and runtime errors, and returns a screensh
 
 ### 截图的上下文预算
 
-每次迭代产生一张截图，而图片在 LLM 上下文里按 token 计费并占用窗口。迭代五六轮就可能把窗口撑满，表现为模型突然开始遗忘早期指令。
-
-策略：**只有最近一次 `preview_widget` 的截图进入出站上下文**，更早的在 `convertToLlm` 的出站视图里替换为一行文字摘要（例如"截图已省略：第 2 轮渲染，2 个 console 错误"），SQLite 里的原始条目不改写。这与 edge-mac-widget 处理重复 brief 的做法同形——改出站视图，不改存储。
-
-截图本身作为二进制存进 L1 的分块表即可，它不参与 grep。若单会话截图累积到影响 DO 存储，再考虑迁往 R2；这是 R2 未来第一个真实用例。
+每次预览将截图作为工具结果图片返回模型，原始工具结果随 pi 条目持久化。当前没有移除旧截图的出站投影；多轮预览会增加上下文和存储开销。若实际长会话出现压力，应评估只保留最近截图的出站视图，但不能静默改写已存储条目。截图不属于 `/out` 的三文件交付物。
 
 ### iOS 离线
 
@@ -339,11 +294,7 @@ Worker Loader 绑定已在本账号实测可用，不构成障碍。
 
 ### preview_widget
 
-在生产部署上验证（本地 miniflare 在 Apple Silicon 上取到架构不匹配的 Chromium，`spawn Unknown system error -88`）：
-
-- `out/widget.html` 中的 `<script src="extra.js">` 经请求拦截从工作区加载并**实际执行**——页面文本由 `hello` 变为 `patched`，证明走的是解析路径而非拼接
-- 错误列表为空，说明 `/favicon.ico` 的 204 处理生效；若改为 `abort()`，它会以 `requestfailed` 加一条 console 错误的形式进入列表
-- 截图返回 5,188 字节
+并置的 `preview-render.browser.test.mjs` 在真实 Chrome 中验证三档画布、数值零与缺字段、捕获脚本隔离、HTTP 数据加载和重复渲染。尺寸越界、裁剪、CSS/JS 动画、加载失败及语法错误均有负例；每次预览的 browser context 在结束后被释放。实际模型与 Browser Run 的验证记录由[静态 widget 决策](../feature/2026-09-30-static-ios-widget-artifacts.md)拥有。
 
 ### 尚未覆盖
 
@@ -376,7 +327,7 @@ Worker Loader 绑定已在本账号实测可用，不构成障碍。
 
 因此 DO 的唯一 alarm 槽位已经承载了"turn 保活 + 中断检测"。若本篇将来再引入第三个用途（例如跨 turn 的浏览器会话回收、工作区过期清理），必须并入同一个按最早到期时间设置的调度器，并在触发时判断该做哪件事。两处独立 `setAlarm` 会互相覆盖，症状是间歇性的"该做的事没做"，难以复现。
 
-**放弃 Sandbox 是一个可能需要回退的决定。** 当前 workload 是"读 HTML、写两个文件、渲染截图"，不需要构建或依赖。若后续 widget 需要打包、引入 npm 库、或跑测试，Sandbox 就必须加回来，届时 R2 也一并需要（`mountBucket` 只认 S3 兼容存储，DO 挂不上）。这不是设计缺陷，是范围假设；把它记在这里是为了让回退时能看到当初的判断依据。
+**放弃 Sandbox 是一个可能需要回退的决定。** 当前 workload 是"读 HTML、写三个文件、渲染截图"，不需要构建或依赖。若后续 widget 需要打包、引入 npm 库、或跑测试，Sandbox 就必须加回来，届时 R2 也一并需要（`mountBucket` 只认 S3 兼容存储，DO 挂不上）。这不是设计缺陷，是范围假设；把它记在这里是为了让回退时能看到当初的判断依据。
 
 ## 后果
 

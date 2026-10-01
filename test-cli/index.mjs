@@ -22,6 +22,7 @@
 
 import { createInterface } from "node:readline/promises";
 
+import { artifactReceiver } from "./artifacts.mjs";
 import { Client, cursors } from "./client.mjs";
 import { runChecks } from "./checks.mjs";
 import { followRenderer, render } from "./render.mjs";
@@ -89,22 +90,37 @@ async function main() {
         sessionId = body.sessionId;
         console.log(`session ${sessionId}`);
       }
+      const turnId = client.newTurnId();
+      const artifacts = artifactReceiver({ sessionId, turnId });
       const result = await client.prompt({
         sessionId,
+        turnId,
         text: words.join(" "),
         files,
         gzip,
-        onFrame: render,
+        onFrame: async frame => {
+          render(frame);
+          await artifacts.onFrame(frame);
+        },
       });
       if (result.status !== 200) {
         console.error(`\n${result.status}`, JSON.stringify(result.body));
         process.exit(1);
       }
+      artifacts.finish();
       return;
     }
     case "events": {
       const [sessionId, since] = args;
-      await client.events(sessionId, Number(since ?? 0), { onFrame: followRenderer() });
+      const artifacts = artifactReceiver({ sessionId });
+      const show = followRenderer();
+      const result = await client.events(sessionId, Number(since ?? 0), {
+        onFrame: async frame => {
+          show(frame);
+          await artifacts.onFrame(frame);
+        },
+      });
+      if (result.status !== 200) throw new Error(`events returned ${result.status}`);
       return;
     }
     case "timeline": {
@@ -310,18 +326,23 @@ async function chat(client, existing) {
   const send = async text => {
     const files = state.files;
     state.files = []; // staged files belong to one message, not to the session
+    const turnId = client.newTurnId();
+    const artifacts = artifactReceiver({ sessionId: state.sessionId, turnId });
     const result = await client.prompt({
       sessionId: state.sessionId,
+      turnId,
       text,
       files,
       gzip: state.gzip,
       since: state.since,
-      onFrame: frame => {
-        if (frame.id !== undefined) state.since = Number(frame.id);
+      onFrame: async frame => {
         render(frame);
+        await artifacts.onFrame(frame);
+        if (frame.id !== undefined) state.since = Number(frame.id);
       },
     });
-    if (result.status !== 200) console.error(`${result.status}`, JSON.stringify(result.body));
+    if (result.status !== 200) throw new Error(`${result.status} ${JSON.stringify(result.body)}`);
+    artifacts.finish();
     console.log();
   };
 
@@ -365,4 +386,7 @@ async function chat(client, existing) {
   }
 }
 
-await main();
+await main().catch(error => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = 1;
+});

@@ -92,27 +92,11 @@ UserAgentDO（idFromName(userId)）
 | 工具接入 | 经 `createXToolDefinition(cwd, { operations })` 注册为 `customTools` | `*Operations` 的入口是每个工具的定义工厂，不是 `createAgentSession` 的参数。把 operations 直接交给会话不会报错也不生效——内置工具原样保留，`write` 撞上 pi 自己的权限层返回 `operation not permitted`，`bash` 则去调 `child_process.spawn`。同名 customTool 覆盖内置，因而 pi 的参数校验、截断与 diff 全部保留，只换掉 IO |
 | 工具环境 | 只转发 `PI_*` 前缀的变量 | `nodejs_compat` 把 secrets 一并填进 `process.env`，pi 的 bash 工具用 `getShellEnv()` 构造子进程环境——原样转发等于把网关 key 交出去 |
 
-#### 系统提示词留作独立工作
+#### 系统提示词
 
-pi 的会话需要一份 operating brief——告诉模型怎么读 HTML、怎么定位选区、怎么写 XPath 兜底、怎么避免编造数据。edge-mac-widget 的对应文件有 818 行，其质量直接决定产品好坏：本篇与文件系统篇记录的"渲染成功不等于数字正确"那类风险，防线全在这里。
+`BriefProvider.system()` 定义网页提取、三文件产物、自适应尺寸和静态截图要求，内容决策见[静态 widget 决策](../feature/2026-09-30-static-ios-widget-artifacts.md)。接口保持 `system({ sessionId, workspaceRoot, outDir }): string` 与 `strip(text): string`；同一会话的 system 文本必须逐字节稳定，禁止时间戳、随机标识或不稳定的拼装顺序，以保持上游前缀缓存。
 
-**本版本不设计提示词内容，只固定它的接口**：
-
-```ts
-interface BriefProvider {
-  /**
-   * 会话级系统提示词。provider 不支持 system role 时由调用方降级为首条 user 消息。
-   *
-   * 对同一个 sessionId 必须逐字节稳定——上游的 prompt 缓存按前缀匹配，
-   * 任何时间戳、随机标识或依赖迭代顺序的拼装都会让每一轮都未命中。
-   */
-  system(ctx: { sessionId: string; workspaceRoot: string; outDir: string }): string
-  /** 从条目中剥除 brief，供历史投影使用。 */
-  strip(text: string): string
-}
-```
-
-`system()` 与 `strip()` 必须成对：投影依赖 `strip` 把 brief 从首条用户消息里摘干净，否则恢复的客户端可能看到服务端提示词。当前 HTTP 路径未使用 strip。完善内容时可从 edge-mac-widget 的版本裁剪起步，但那份文本是为"工具在客户端执行"写的，涉及本机路径与 shell 能力的段落不适用。
+`strip()` 用于移除存储文本中的 brief，当前 HTTP 历史路径未调用该投影接口。参考项目中客户端本机路径、shell 和 Windows 实时卡片的约定不适用于本工程。
 
 与 edge-mac-widget 的**唯一结构性差异**：那边通过 WebSocket RPC 把 `*Operations` 指向客户端，这边指向同进程的 DO SQLite 文件系统。pi 的这层 seam 不变，换的只是另一端。
 

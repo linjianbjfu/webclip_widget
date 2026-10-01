@@ -57,3 +57,13 @@ npm run test-cli -- prompt \
 
 
 `abort` 的执行限制、回放与重连语义见[客户端协议](protocol.md)。CLI 的 `events` 读取一次流；网络断开后需要再次调用并传入已收到的游标。
+
+## 自动保存 widget
+
+`prompt` 和 `chat` 收到本轮成功完成的三个文件后，自动保存到当前目录下的 `downloads/<sessionId>/`，并打印 `Saved widget: <绝对路径>`。目录内是 `extra.js`、`widget.html`、`meta.json`；文件职责、数据注入方式和三档尺寸见[产物协议](protocol.md#widget-文件与截图)。目录不存在时自动创建；同一会话的后续产物覆盖这三个文件，路径不变。客户端的 data.json、其他文件及原有旧轮次子目录保留。
+
+CLI 校验文件集合、UTF-8 字节数、sha256 和 metadata，先将全部文件写入临时目录，再逐个替换会话目录中的产物。缺文件、内容损坏、写入失败、失败/中止轮次或本轮完成事件缺失会报错并以非零状态退出，不会宣称保存成功。无产物的普通对话不创建目录。三个产物即使被本地修改也会覆盖；每个文件单独替换，若替换过程中发生 IO 故障，可能已更新部分文件，CLI 会报错。
+
+`events` 跟随到实时完成事件时也会保存。历史完成事件只有 metadata，没有文件内容，CLI 会提示 `historical content unavailable`；目前无法补下载断线期间已完成的文件。
+
+保存目录包含服务端生成的三个文件。运行时的 `data.json` 由 iOS 客户端执行提取后写入同目录；本地调试也需准备该文件，再用 HTTP server 打开 `widget.html`。HTML 不内嵌数据，缺少 data.json 时显示静态错误状态，详情见[数据加载约定](protocol.md#widget-文件与截图)。

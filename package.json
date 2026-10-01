@@ -16,11 +16,15 @@
     "test:watch": "npm run test:watch --workspace @webclip/backend --",
     "dev": "npm run dev --workspace @webclip/backend --",
     "deploy": "npm run deploy --workspace @webclip/backend --",
-    "check": "npm run check --workspace @webclip/backend && npm run verify-notes && npm run verify-docs",
+    "check": "npm run check --workspace @webclip/backend && npm run test:cli && npm run test:agent && npm run test:browser && npm run verify-notes && npm run verify-docs",
     "types": "npm run types --workspace @webclip/backend --",
     "e2e": "node test-cli/index.mjs check",
     "test-cli": "node test-cli/index.mjs",
-    "verify-model-limits": "npm run verify-model-limits --workspace @webclip/backend --"
+    "verify-model-limits": "npm run verify-model-limits --workspace @webclip/backend --",
+    "test:cli": "node --test test-cli/*.test.mjs",
+    "test:browser": "node --test backend/src/agent/*.browser.test.mjs",
+    "e2e:widgets": "node test-cli/widget-checks.mjs",
+    "test:agent": "node --test backend/src/agent/*.node.test.mjs"
   },
   "workspaces": [
     "backend"

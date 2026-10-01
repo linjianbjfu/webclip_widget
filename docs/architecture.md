@@ -1,6 +1,6 @@
 # 架构与限制
 
-服务端接收网页与截图，在会话工作区中运行 agent 工具，生成供 iOS WebView 使用的 widget。客户端可以离线，工具执行和存储均由服务端承担。
+服务端接收网页与截图，在会话工作区中运行 agent 工具，生成在 iOS WebView 中渲染、截图后用作桌面背景的 widget。客户端可以离线，工具执行和存储均由服务端承担。
 
 ```text
 iOS / CLI ──HTTP/SSE──► Worker ──► UserAgentDO（每用户一个）
@@ -17,7 +17,7 @@ iOS / CLI ──HTTP/SSE──► Worker ──► UserAgentDO（每用户一个
 
 [工作区文件系统](../backend/src/fs/workspace-fs.ts)按会话隔离，在 DO SQLite 中按 512 KB 分块存储。读取接口重组完整字节，因此 shell 命令不需要知道分块方式。pi 的文件与 bash 工具通过 operations 接入服务端工作区，不能使用客户端本机文件系统。
 
-[preview_widget](../backend/src/agent/preview.ts)用 Browser Run 检查渲染错误并截图。截图可以发现语法、运行和加载错误，不能证明数据来自原网页；Chromium 的结果也不能替代真实 WKWebView 验证。文件系统与渲染方案的取舍见[工作区决策](../.agents/notes/implemented/architecture/2026-09-28-server-workspace-filesystem.md)。
+[preview_widget](../backend/src/agent/preview.ts)用 Browser Run 执行提取和渲染，提供同源 data.json、等待数据加载完成，按 metadata 的尺寸检查数据渲染一致性、布局溢出和可检测的动画，并将截图返回模型。数据与尺寸约定见[产物协议](protocol.md#widget-文件与截图)。通过检查不能证明提取区域正确；Chromium 的结果也不能替代真实 WKWebView 验证。文件系统与渲染方案的取舍见[工作区决策](../.agents/notes/implemented/architecture/2026-09-28-server-workspace-filesystem.md)。
 
 ## 持久化与恢复
 
@@ -29,7 +29,7 @@ turn 在 SSE 响应返回后继续执行。[alarm 策略](../backend/src/do/turn
 
 ## 系统提示词
 
-[BriefProvider](../backend/src/agent/brief.ts)目前提供基础任务说明，提取质量仍需独立完善。同一会话的 `system()` 必须保持字节稳定；时间戳、随机值或不稳定顺序会影响上游前缀缓存。`strip()` 提供移除 brief 的接口，但 HTTP 历史当前直接发送 pi 条目，没有调用该投影接口。
+[BriefProvider](../backend/src/agent/brief.ts)定义源网页提取、三文件交付、尺寸自动选择和静态截图要求；具体契约见[产物协议](protocol.md#widget-文件与截图)。同一会话的 `system()` 必须保持字节稳定；时间戳、随机值或不稳定顺序会影响上游前缀缓存。`strip()` 提供移除 brief 的接口，但 HTTP 历史当前直接发送 pi 条目，没有调用该投影接口。
 
 ## 使用边界
 

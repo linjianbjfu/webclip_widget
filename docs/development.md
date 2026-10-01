@@ -33,12 +33,17 @@ npm run dev
 |---|---|
 | `npm run typecheck` | TypeScript 类型检查 |
 | `npm test` | Workers runtime 中的测试 |
+| `npm run test:agent` | 真实 pi SDK 的 prompt 加载、UTF-8 读取和编辑 |
+| `npm run test:cli` | Node 中的 bundle 保存及真实 CLI 命令入口测试 |
+| `npm run test:browser` | 本地 Chrome 中的提取、三档布局、溢出与动画检查 |
 | `npm run verify-docs` | README、根指令和 docs 中的本地 Markdown 链接目标 |
 | `npm run verify-notes` | Agent Note 分类、格式与归档封存 |
 | `npm run verify-model-limits` | 模型注册表与网关公布的上限 |
 | `npm run check` | 上述检查的串行聚合，任一失败即停止 |
 
 单元与模块集成测试与实现放在一起，命名为 `backend/src/**/<模块>.test.ts`。例如 [store.test.ts](../backend/src/do/store.test.ts) 测试同目录的 Store，[user-agent-do.test.ts](../backend/src/do/user-agent-do.test.ts) 测试 DO alarm 与恢复分支。Vitest 默认发现这些文件，无需维护文件清单。
+
+CLI 测试与实现并置于 `test-cli/*.test.mjs`，使用独立临时目录与随机监听端口。SDK 接入测试位于 `backend/src/agent/*.node.test.mjs`，在 Node 中直接调用真实 pi SDK 验证 resource loader 和工具 IO，不替代 Workers 平台验证。浏览器测试与渲染实现并置于 `backend/src/agent/*.browser.test.mjs`，不进入 Workers 测试池。`test:browser` 使用 `CHROME_EXECUTABLE` 指定的浏览器；未设置时，macOS 使用 `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`，其他平台使用 PATH 中的 `chromium`。缺少浏览器会失败，需安装 Chromium 或设置该变量。浏览器测试每次分配独立配置目录和调试端口，并在结束时关闭进程。
 
 真实服务端到端检查位于 [test-cli/checks.mjs](../test-cli/checks.mjs)。[模型兼容性测试](../backend/src/agent/model.live.test.ts.skip)保留 `.skip` 后缀，不参与默认测试；其 pi 导入与 Workers 测试池的兼容限制尚未解决。
 
@@ -57,6 +62,12 @@ export WEBCLIP_USER=me
 npm run test-cli -- sessions
 npm run e2e
 ```
+
+```bash
+npm run e2e:widgets
+```
+
+该检查使用[固定网页](../test-cli/fixtures/widget-source.html)，真实生成 small、middle、large 以及两种未指定尺寸的 widget。要求最终 Browser Run 预览成功、metadata 符合预期并保存三个文件到 `downloads/`；会清理测试会话。它需要模型凭据和可用的 Browser Run，产生模型费用，不属于默认 `check`。如果改变 backend 源码触发 Wrangler 重载，正在运行的模型检查会断线，需要待服务就绪后重新运行；断线结果不算通过。
 
 `sessions` 用于确认认证和路由；新服务的列表为空是正常结果。`e2e` 会创建测试会话、调用真实模型并清理会话，产生模型费用。测试检查认证、SSE 续传、幂等、上传和产物交付；其实现位于 [test-cli/checks.mjs](../test-cli/checks.mjs)。
 

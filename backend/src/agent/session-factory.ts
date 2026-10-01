@@ -14,6 +14,7 @@
 
 import {
   type AgentSession,
+  type CreateAgentSessionOptions,
   buildSessionContext,
   createAgentSession,
   createBashToolDefinition,
@@ -22,7 +23,6 @@ import {
   createLsToolDefinition,
   createReadToolDefinition,
   createWriteToolDefinition,
-  DefaultResourceLoader,
   type ModelRuntime,
   type SessionContext,
   type SessionEntry,
@@ -30,7 +30,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import { withWorkspaceShellBrief } from "./bash-brief.ts";
-import { createBriefProvider } from "./brief.ts";
+import { createWidgetResourceLoader } from "./widget-resources.ts";
 import { createPreviewTool } from "./preview.ts";
 import { createWorkspaceOperations } from "./operations.ts";
 import { WORKSPACE_ROOT, OUT_DIR, createShell } from "../shell/bash.ts";
@@ -87,7 +87,6 @@ export async function openSession(input: OpenSessionInput): Promise<OpenedSessio
   const manager = SessionManager.inMemory();
   const shell = createShell(input.fs);
   const operations = createWorkspaceOperations(input.fs, shell);
-  const brief = createBriefProvider();
 
   const model = input.modelRuntime.getModel(input.providerId, input.modelId);
   if (!model) throw new Error(`model ${input.providerId}/${input.modelId} is not registered`);
@@ -117,15 +116,14 @@ export async function openSession(input: OpenSessionInput): Promise<OpenedSessio
     model,
     modelRuntime: input.modelRuntime,
     sessionManager: manager,
-    // jiti cannot load TypeScript extensions under Workers.
-    resourceLoader: new DefaultResourceLoader({ cwd: WORKSPACE_ROOT, agentDir: "/.agent", noExtensions: true }),
-    systemPrompt: brief.system({
+    resourceLoader: await createWidgetResourceLoader({
       sessionId: input.sessionId,
       workspaceRoot: WORKSPACE_ROOT,
       outDir: OUT_DIR,
     }),
-    customTools,
-  } as Parameters<typeof createAgentSession>[0]);
+    // SDK renderer generics are contravariant; keep this cast local to the tool list.
+    customTools: customTools as NonNullable<CreateAgentSessionOptions["customTools"]>,
+  });
 
   // Restored messages are assigned after construction: `createAgentSession`
   // takes no context parameter, so passing one is silently ignored and every

@@ -7,3 +7,5 @@ dist/
 !/backend/.dev.vars.example
 .env
 .env.*
+
+/downloads/

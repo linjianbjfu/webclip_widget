@@ -11,6 +11,8 @@
  * grep reaches the agent as a custom tool over the shell instead.
  */
 
+import { Buffer } from "node:buffer";
+
 import type {
   BashOperations,
   EditOperations,
@@ -50,7 +52,8 @@ export interface WorkspaceOperations {
 }
 
 export function createWorkspaceOperations(fs: WorkspaceFs, shell: Bash): WorkspaceOperations {
-  const readFile = async (path: string): Promise<Uint8Array> => fs.readFileBuffer(path);
+  // Pi calls toString("utf-8") and toString("base64") on these bytes.
+  const readFile = async (path: string) => Buffer.from(await fs.readFileBuffer(path));
 
   const bash: BashOperations = {
     exec: async (command, cwd, { onData, signal, timeout, env }) => {

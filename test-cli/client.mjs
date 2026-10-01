@@ -87,7 +87,7 @@ export class Client {
    *   Their presence switches the request to multipart.
    * @param {boolean} [options.gzip] Compress text uploads. The server decodes
    *   them before storing, so later readers still see the real bytes.
-   * @param {(frame: import("./sse.mjs").Frame) => void} [options.onFrame]
+   * @param {(frame: import("./sse.mjs").Frame) => void | Promise<void>} [options.onFrame]
    */
   async prompt(options) {
     const turnId = options.turnId ?? this.newTurnId();
@@ -141,7 +141,7 @@ export class Client {
         if (done) break;
         for (const frame of parser.push(decoder.decode(value, { stream: true }))) {
           frames.push(frame);
-          onFrame?.(frame);
+          await onFrame?.(frame);
           if (stopAfter !== undefined && frames.length >= stopAfter) {
             // Drop the connection the way a backgrounded app does: no close
             // handshake, just a reader that stops.
@@ -152,6 +152,7 @@ export class Client {
         }
       }
     } finally {
+      await reader.cancel().catch(() => {});
       reader.releaseLock?.();
     }
     return frames;
