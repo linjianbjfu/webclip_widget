@@ -2,11 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { once } from "node:events";
-import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import puppeteer from "@cloudflare/puppeteer";
+import { launchBrowser } from "../../../test-cli/browser.mjs";
 import { renderWidgetPreview } from "./preview-render.ts";
 import { WIDGET_SIZES } from "../widget-contract.ts";
 
@@ -49,36 +45,9 @@ function widget({ css = "", script = "", load = loadData } = {}) {
 }
 
 async function browserFixture(t) {
-  const directory = await mkdtemp(join(tmpdir(), "webclip-browser-"));
-  const executable = process.env.CHROME_EXECUTABLE ?? (process.platform === "darwin"
-    ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" : "chromium");
-  let child;
-  let browser;
-  let exited;
-  t.after(async () => {
-    if (browser) await browser.disconnect();
-    if (child && child.exitCode === null && child.signalCode === null) child.kill();
-    if (exited) await exited;
-    await rm(directory, { recursive: true, force: true });
-  });
-  child = spawn(executable, ["--headless", "--no-first-run", "--no-default-browser-check",
-    "--disable-background-networking", "--remote-debugging-port=0", `--user-data-dir=${directory}`],
-    { stdio: ["ignore", "ignore", "pipe"] });
-  exited = new Promise(resolve => child.once("close", resolve));
-  const endpoint = await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("Chrome did not publish its DevTools endpoint")), 30_000);
-    let stderr = "";
-    const clean = () => clearTimeout(timer);
-    child.once("error", error => { clean(); reject(error); });
-    child.once("exit", () => { clean(); reject(new Error(`Chrome exited before readiness: ${stderr.slice(-1000)}`)); });
-    child.stderr.on("data", bytes => {
-      stderr += bytes.toString();
-      const match = stderr.match(/DevTools listening on (ws:\/\/[^\s]+)/);
-      if (match) { clean(); resolve(match[1]); }
-    });
-  });
-  browser = await puppeteer.connect({ browserWSEndpoint: endpoint });
-  return browser;
+  const owned = await launchBrowser({ headless: true });
+  t.after(() => owned.close());
+  return owned.browser;
 }
 
 test("real browser verifies all sizes, source isolation, HTTP data loading, overflow and motion", async t => {

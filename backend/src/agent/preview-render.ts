@@ -1,4 +1,5 @@
 /** Browser verification shared by Browser Run and the local browser regression tests. */
+import { extractionExpression } from "./extraction.ts";
 import type { Browser } from "@cloudflare/puppeteer";
 import { WIDGET_SIZES, type WidgetSize } from "../widget-contract.ts";
 
@@ -118,22 +119,7 @@ export async function renderWidgetPreview(browser: Browser, files: PreviewFiles)
     let extractedData: string | null = null;
     if (syntaxError === null) {
       try {
-        extractedData = await extraction.evaluate(`(() => {
-          const doc = new DOMParser().parseFromString(${JSON.stringify(files.source)}, 'text/html');
-          // Direct eval preserves the script completion value; document is the inert capture.
-          const run = new Function('document', 'scriptSource', 'return eval(scriptSource)');
-          const data = run(doc, ${JSON.stringify(files.extra)});
-          if (!data || typeof data !== 'object' || Array.isArray(data) || typeof data.then === 'function'
-              || ![Object.prototype, null].includes(Object.getPrototypeOf(data))) {
-            throw new Error('Executing extra.js must directly return a synchronous JSON object');
-          }
-          return JSON.stringify(data, (_key, value) => {
-            if (value === null || typeof value === 'string' || typeof value === 'boolean'
-              || (typeof value === 'number' && Number.isFinite(value)) || Array.isArray(value)
-              || (typeof value === 'object' && [Object.prototype, null].includes(Object.getPrototypeOf(value)))) return value;
-            throw new Error('extra.js result must contain only JSON values');
-          });
-        })()`) as string;
+        extractedData = await extraction.evaluate(extractionExpression(files.extra, files.source)) as string;
       } catch (error) {
         note(`extraction: ${String(error)}`);
       }

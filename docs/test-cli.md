@@ -1,6 +1,6 @@
 # CLI 使用
 
-CLI 用于驱动服务端和执行端到端检查。先完成[本地运行](development.md)，配置 `WEBCLIP_URL`、`WEBCLIP_TOKEN` 和 `WEBCLIP_USER`。前两项必填，用户标识默认是 `cli`。以下命令在仓库根目录执行；`<session>` 替换为创建会话返回的 ID。
+CLI 用于驱动服务端、执行端到端检查及本地预览 widget。[本地预览](#本地预览-widget)不需要服务端或凭据；其余服务端命令先完成[本地运行](development.md)，配置 `WEBCLIP_URL`、`WEBCLIP_TOKEN` 和 `WEBCLIP_USER`。前两项必填，用户标识默认是 `cli`。以下命令在仓库根目录执行；`<session>` 替换为创建会话返回的 ID。
 
 ```bash
 export WEBCLIP_URL=http://localhost:8787
@@ -67,3 +67,22 @@ CLI 校验文件集合、UTF-8 字节数、sha256 和 metadata，先将全部文
 `events` 跟随到实时完成事件时也会保存。历史完成事件只有 metadata，没有文件内容，CLI 会提示 `historical content unavailable`；目前无法补下载断线期间已完成的文件。
 
 保存目录包含服务端生成的三个文件。运行时的 `data.json` 由 iOS 客户端执行提取后写入同目录；本地调试也需准备该文件，再用 HTTP server 打开 `widget.html`。HTML 不内嵌数据，缺少 data.json 时显示静态错误状态，详情见[数据加载约定](protocol.md#widget-文件与截图)。
+
+## 本地预览 widget
+
+已有网页 HTML 和生成的产物目录时，直接运行：
+
+```bash
+npm run test-cli -- preview --source ./source.html --out ./downloads/SESSION_ID
+npm run test-cli -- preview --help
+```
+
+`--source` 和 `--out` 均必填，路径相对于命令的工作目录。out 必须已有 `extra.js`、`widget.html`、`meta.json`；可以含有 data.json 或其他文件。该命令不调用 backend 或模型，也不需要 WEBCLIP 环境变量。
+
+CLI 启动独立的可见 Chrome/Chromium，以 file URL 打开 source.html，正常执行原页面脚本；等待页面 load 后固定再等 **3 秒**，执行 extra.js 的完整内容。同步 JSON 对象通过校验后写入 out/data.json，已有数据文件被覆盖，其他文件保留。提取、校验或写入失败不会替换原数据。固定 3 秒不保证所有网站的异步数据都已到达，提取使用当时的 DOM；没有选择器或等待时长参数。
+
+随后 CLI 启动仅监听 `127.0.0.1` 的 HTTP server，自动选择空闲端口，并在同一浏览器中打开 widget.html。页面按 meta 的参考尺寸显示，并从磁盘上的 data.json 读取数据。等 widgetReady、字体和图片完成后，终端打印 `Data saved:` 和 `Preview ready:`；只有这些步骤成功才报告就绪。渲染失败会退出并报告错误，已成功生成的 data.json 保留。
+
+终端持续运行供查看；按 Ctrl-C、发送 SIGTERM、关闭预览标签页或关闭该浏览器会结束命令，关闭 HTTP 服务并删除临时浏览器 profile。再次提取时重新运行命令。命令不借用日常浏览器的登录态；本地 file URL 也不能恢复原网站的 origin 或缺失资源。
+
+浏览器可执行文件通过 `CHROME_EXECUTABLE` 指定。未设置时，macOS 使用 `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`，其他平台使用 PATH 中的 `chromium`。需要图形桌面环境；CLI 不自动下载浏览器。完整浏览器配置和测试入口见[开发指南](development.md)。

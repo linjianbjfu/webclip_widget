@@ -22,11 +22,12 @@
     "test-cli": "node test-cli/index.mjs",
     "verify-model-limits": "npm run verify-model-limits --workspace @webclip/backend --",
     "test:cli": "node --test test-cli/*.test.mjs",
-    "test:browser": "node --test backend/src/agent/*.browser.test.mjs",
+    "test:browser": "node --test backend/src/agent/*.browser.test.mjs test-cli/browser-tests/*.test.mjs",
     "e2e:widgets": "node test-cli/widget-checks.mjs",
     "test:agent": "node --test backend/src/agent/*.node.test.mjs"
   },
   "workspaces": [
-    "backend"
+    "backend",
+    "test-cli"
   ]
 }

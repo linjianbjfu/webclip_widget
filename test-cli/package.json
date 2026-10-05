@@ -1,0 +1,7 @@
+{
+  "name": "@webclip/test-cli",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.6" },
+  "dependencies": { "@cloudflare/puppeteer": "^1.4.0" }
+}

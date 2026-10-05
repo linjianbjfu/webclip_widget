@@ -10,7 +10,9 @@ Status: implemented
 
 extra.js 是同步、立即执行并返回 JSON 对象的表达式，例如 `(() => { ...; return data; })()`。脚本直接读取源网页 document，变量留在 IIFE 内，不注册全局入口、不要求参数或第二次函数调用，也不自己写文件。客户端序列化执行结果并保存 data.json，HTML 沿用既有 HTTP 数据加载流程。
 
-预览在独立浏览器页面用 DOMParser 构建捕获文档，将其绑定为 document，直接求值整份 extra.js 并读取完成值。捕获 HTML 的脚本不执行。函数、undefined、Promise、字符串、非普通对象及无法 JSON 序列化的结果不能通过验证，JSON 字段中的 undefined、非有限数字等也不能被静默丢弃或替换。
+服务端预览在独立浏览器页面用 DOMParser 构建捕获文档，将其绑定为 document，直接求值整份 extra.js 并读取完成值。捕获 HTML 的脚本不执行。函数、undefined、Promise、字符串、非普通对象及无法 JSON 序列化的结果不能通过验证，JSON 字段中的 undefined、非有限数字等也不能被静默丢弃或替换。
+
+提取表达式与 JSON 校验由 extraction.ts 共享；[本地 preview 命令](../feature/2026-10-05-cli-local-widget-preview.md)使用真实加载后的源网页 document，服务端使用捕获文档。
 
 此选择替代[静态 widget](../feature/2026-09-30-static-ios-widget-artifacts.md)的命名提取入口；[运行时 data.json](../feature/2026-10-01-widget-runtime-data-json.md)的文件和 HTTP 流程继续适用。相关笔记的独立理由保持活跃并互相链接，没有归档或删除。
 

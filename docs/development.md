@@ -6,7 +6,7 @@
 
 [backend/](../backend/) 是 npm workspace，包含服务端源码、并置测试、Wrangler 配置、生成类型和后端专用脚本；依赖声明在 [backend/package.json](../backend/package.json)。根目录维护统一的 package-lock.json，安装在根目录执行。
 
-[test-cli/](../test-cli/) 是无第三方依赖的 Node 客户端，通过 HTTP 访问后端。它使用 `WEBCLIP_URL`、`WEBCLIP_TOKEN`、`WEBCLIP_USER`，不读取后端模型密钥。输入文件路径相对于启动 CLI 的当前目录。
+[test-cli/](../test-cli/) 是 Node workspace，依赖由自己的 [package.json](../test-cli/package.json) 拥有，共享根 lockfile。服务端命令使用 `WEBCLIP_URL`、`WEBCLIP_TOKEN`、`WEBCLIP_USER`，不读取后端模型密钥；本地 preview 命令直接控制浏览器，不需要这些变量。输入文件路径相对于启动 CLI 的当前目录。
 
 根目录的 dev、test、typecheck、types、deploy 和 verify-model-limits 命令转发到 backend，后端工具的工作目录是 backend。也可以在该目录直接执行对应 npm 命令。未来 iOS 与 Web 应用使用独立目录及配置；共享协议仍由 [protocol.md](protocol.md)维护。
 
@@ -34,8 +34,8 @@ npm run dev
 | `npm run typecheck` | TypeScript 类型检查 |
 | `npm test` | Workers runtime 中的测试 |
 | `npm run test:agent` | 真实 pi SDK 的 prompt 加载、UTF-8 读取和编辑 |
-| `npm run test:cli` | Node 中的 bundle 保存及真实 CLI 命令入口测试 |
-| `npm run test:browser` | 本地 Chrome 中的提取、三档布局、溢出与动画检查 |
+| `npm run test:cli` | Node 中的 bundle 保存、本地预览参数/等待/写入/HTTP 服务及 CLI 命令入口 |
+| `npm run test:browser` | 本地 Chrome 中的提取、三档布局、溢出/动画及本地预览生命周期 |
 | `npm run verify-docs` | README、根指令和 docs 中的本地 Markdown 链接目标 |
 | `npm run verify-notes` | Agent Note 分类、格式与归档封存 |
 | `npm run verify-model-limits` | 模型注册表与网关公布的上限 |
@@ -43,7 +43,7 @@ npm run dev
 
 单元与模块集成测试与实现放在一起，命名为 `backend/src/**/<模块>.test.ts`。例如 [store.test.ts](../backend/src/do/store.test.ts) 测试同目录的 Store，[user-agent-do.test.ts](../backend/src/do/user-agent-do.test.ts) 测试 DO alarm 与恢复分支。Vitest 默认发现这些文件，无需维护文件清单。
 
-CLI 测试与实现并置于 `test-cli/*.test.mjs`，使用独立临时目录与随机监听端口。SDK 接入测试位于 `backend/src/agent/*.node.test.mjs`，在 Node 中直接调用真实 pi SDK 验证 resource loader 和工具 IO，不替代 Workers 平台验证。浏览器测试与渲染实现并置于 `backend/src/agent/*.browser.test.mjs`，不进入 Workers 测试池。`test:browser` 使用 `CHROME_EXECUTABLE` 指定的浏览器；未设置时，macOS 使用 `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`，其他平台使用 PATH 中的 `chromium`。缺少浏览器会失败，需安装 Chromium 或设置该变量。浏览器测试每次分配独立配置目录和调试端口，并在结束时关闭进程。
+CLI 测试与实现并置于 `test-cli/*.test.mjs`，使用独立临时目录与随机监听端口。SDK 接入测试位于 `backend/src/agent/*.node.test.mjs`，在 Node 中直接调用真实 pi SDK 验证 resource loader 和工具 IO，不替代 Workers 平台验证。后端浏览器测试与渲染实现并置于 `backend/src/agent/*.browser.test.mjs`；CLI 浏览器流程测试位于 `test-cli/browser-tests/*.test.mjs`。二者都不进入 Workers 测试池。`test:browser` 使用 `CHROME_EXECUTABLE` 指定的浏览器；未设置时，macOS 使用 `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`，其他平台使用 PATH 中的 `chromium`。缺少浏览器会失败，需安装 Chromium 或设置该变量。浏览器测试与 CLI 复用 [browser.mjs](../test-cli/browser.mjs)，每次分配独立配置目录和调试端口，结束时等待进程退出并删除配置目录。测试用无头浏览器，交互式 preview 默认打开可见浏览器。实际 CLI 的信号退出测试和继承 stderr 的辅助进程回归测试使用 POSIX 可执行适配器，因此 Windows 跳过这两项，其余浏览器流程测试不依赖此适配器。
 
 真实服务端到端检查位于 [test-cli/checks.mjs](../test-cli/checks.mjs)。[模型兼容性测试](../backend/src/agent/model.live.test.ts.skip)保留 `.skip` 后缀，不参与默认测试；其 pi 导入与 Workers 测试池的兼容限制尚未解决。
 

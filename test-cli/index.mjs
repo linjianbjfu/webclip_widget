@@ -5,6 +5,8 @@
  * Configuration comes from the environment so a token never lands in shell
  * history: WEBCLIP_URL, WEBCLIP_TOKEN, WEBCLIP_USER.
  *
+ *   webclip preview --source PATH --out DIR
+ *                                       extract data and open a local widget
  *   webclip sessions                    list
  *   webclip new [title]                 create
  *   webclip prompt <session> <text> [--file PATH]... [--gzip]
@@ -45,6 +47,11 @@ function config() {
 
 async function main() {
   const [command, ...args] = process.argv.slice(2);
+  if (command === "preview") {
+    const { runPreviewCommand } = await import("./local-preview.mjs");
+    await runPreviewCommand(args);
+    return;
+  }
   if (command === "check") {
     process.exit(await runChecks(config()));
   }
@@ -145,7 +152,7 @@ async function main() {
       return;
     }
     default:
-      console.error("usage: webclip <sessions|new|prompt|chat|events|timeline|abort|rm|check>");
+      console.error("usage: webclip <sessions|new|prompt|chat|events|timeline|abort|rm|check|preview>");
       process.exit(2);
   }
 }

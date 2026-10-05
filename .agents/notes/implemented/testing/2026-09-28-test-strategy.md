@@ -86,7 +86,7 @@ Browser Run 是个例外：`wrangler dev` 会在本地起 headless Chrome，因�
 
 CLI 的文件系统行为由 Node 内置测试运行器执行，`test-cli/*.test.mjs` 使用私有临时目录；命令入口测试绑定随机 loopback 端口，驱动真实子进程并验证文件和退出状态。它不替代 Workers SQLite 测试。`npm run test:cli` 接入根 `check`。
 
-`preview-render.browser.test.mjs` 使用真实本地 Chrome，测试与生产共享的提取及渲染执行器；Workers Vitest 明确排除此文件，避免把 Node 进程启动测试装入 Workers。`npm run test:browser` 接入根 `check`，缺少 Chrome 时失败。每次测试原子分配独立浏览器配置目录和调试端口，结束后等待进程退出。
+`preview-render.browser.test.mjs` 使用真实本地 Chrome，测试与生产共享的提取及渲染执行器；CLI 的 `browser-tests/*.test.mjs` 另外覆盖本地提取、HTTP 预览和退出生命周期。浏览器进程与 profile 的启动、清理由 CLI 的 browser.mjs 统一拥有，详见[本地预览决策](../feature/2026-10-05-cli-local-widget-preview.md)。Workers Vitest 明确排除此文件，避免把 Node 进程启动测试装入 Workers。`npm run test:browser` 接入根 `check`，缺少 Chrome 时失败。每次测试原子分配独立浏览器配置目录和调试端口，结束后等待进程退出。
 
 真实模型的尺寸选择与 Browser Run 工具链由 `npm run e2e:widgets` 验证，使用固定 HTML 并单独计费。三文件与静态截图的理由见[静态 widget 决策](../feature/2026-09-30-static-ios-widget-artifacts.md)。
 

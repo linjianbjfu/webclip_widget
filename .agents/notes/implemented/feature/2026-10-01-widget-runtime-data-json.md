@@ -14,7 +14,7 @@ HTML 在同步初始化阶段公开 window.widgetReady Promise，fetch、解析�
 
 预览将源网页的提取结果作为同源 data.json 的 HTTP 响应，要求页面实际请求该文件，等待 widgetReady，检查画面并截图。截图发生在诊断性的 renderWidget 调用之前，避免检查代码替页面修好显示内容。加载后的文本必须与同一数据的渲染结果一致；缺少 Promise、加载失败或超过 15 秒不能通过检查。完整提取 JSON 仍放在交付目录之外供模型查看字段。
 
-CLI 继续只保存三个服务端文件，本地调试需要准备 data.json 并通过 HTTP 打开页面。[静态 widget 决策](2026-09-30-static-ios-widget-artifacts.md)的数据来源和对应预览选择被本决策替代；尺寸、SDK 接入、存储和 CLI 保存理由保持活跃。相关笔记同步事实并交叉链接，没有完整取代或归档的笔记。
+CLI 的服务端命令只保存三个服务端文件；[本地 preview 命令](../feature/2026-10-05-cli-local-widget-preview.md)在源网页执行 extra.js、生成 data.json 并通过 HTTP 打开页面。[静态 widget 决策](2026-09-30-static-ios-widget-artifacts.md)的数据来源和对应预览选择被本决策替代；尺寸、SDK 接入、存储和 CLI 保存理由保持活跃。相关笔记同步事实并交叉链接，没有完整取代或归档的笔记。
 
 ## 曾考虑的替代方案
 
