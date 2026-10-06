@@ -31,21 +31,23 @@ describe("multipart upload", () => {
     ).toBe(false);
   });
 
-  it("writes plain parts into the workspace root", async () => {
+  it("decodes plain parts without writing the workspace", async () => {
     await withFs("plain", async fs => {
       const form = new FormData();
       form.set("turnId", "9f2c7b1e-4a83-4d15-9c60-7e3b2a5f8d01");
       form.set("text", "make a widget");
       form.append("file", new File(["<html>hi</html>"], "source.html", { type: "text/html" }));
-      const parsed = await parseMultipartPrompt(multipartRequest(form), fs);
+      const parsed = await parseMultipartPrompt(multipartRequest(form));
 
       expect(parsed.text).toBe("make a widget");
-      expect(parsed.files).toEqual([{ name: "source.html", bytes: 15 }]);
-      expect(await fs.readFile("/source.html")).toBe("<html>hi</html>");
+      expect(parsed.files[0]?.name).toBe("source.html");
+      expect(parsed.files[0]?.data.byteLength).toBe(15);
+      expect(new TextDecoder().decode(parsed.files[0]!.data)).toBe("<html>hi</html>");
+      expect(await fs.exists("/source.html")).toBe(false);
     });
   });
 
-  it("stores a gzipped part decoded, so later readers see real bytes", async () => {
+  it("returns a gzipped part decoded, so later readers see real bytes", async () => {
     await withFs("gz", async fs => {
       const original = "<html>".repeat(2000);
       const form = new FormData();
@@ -54,13 +56,13 @@ describe("multipart upload", () => {
         "file",
         new File([await gzip(original)], "source.html.gz", { type: "application/gzip" }),
       );
-      const parsed = await parseMultipartPrompt(multipartRequest(form), fs);
+      const parsed = await parseMultipartPrompt(multipartRequest(form));
 
       // The `.gz` suffix is dropped: the workspace holds the decoded file.
       expect(parsed.files[0]?.name).toBe("source.html");
-      expect(await fs.readFile("/source.html")).toBe(original);
+      expect(new TextDecoder().decode(parsed.files[0]!.data)).toBe(original);
       // grep must see the real content, not a compressed blob.
-      expect(fs.getAllPaths()).toContain("/source.html");
+      expect(await fs.exists("/source.html")).toBe(false);
     });
   });
 
@@ -70,7 +72,7 @@ describe("multipart upload", () => {
       form.set("turnId", "9f2c7b1e-4a83-4d15-9c60-7e3b2a5f8d01");
       form.append("file", new File(["<html/>"], "source.html"));
       form.append("file", new File([new Uint8Array([137, 80, 78, 71])], "screenshot.png"));
-      const parsed = await parseMultipartPrompt(multipartRequest(form), fs);
+      const parsed = await parseMultipartPrompt(multipartRequest(form));
       expect(parsed.files.map(f => f.name).sort()).toEqual(["screenshot.png", "source.html"]);
     });
   });
@@ -81,9 +83,9 @@ describe("multipart upload", () => {
       form.set("turnId", "9f2c7b1e-4a83-4d15-9c60-7e3b2a5f8d01");
       form.append("file", new File(["x"], "../../etc/passwd"));
       form.append("file", new File(["y"], "sub/dir/evil.js"));
-      await parseMultipartPrompt(multipartRequest(form), fs);
+      const parsed = await parseMultipartPrompt(multipartRequest(form));
 
-      const paths = fs.getAllPaths();
+      const paths = parsed.files.map(file => "/" + file.name);
       expect(paths).toContain("/passwd");
       expect(paths).toContain("/evil.js");
       expect(paths.some(p => p.includes(".."))).toBe(false);

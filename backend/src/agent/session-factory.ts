@@ -2,8 +2,8 @@
  * Building and restoring a pi session.
  *
  * Context is rebuilt from the event log's `pi_entry` records only. Those
- * records are pi's own `SessionEntry` values, stored verbatim, so a restored
- * session produces the same request the live one did — thinking blocks and
+ * records restore pi's `SessionEntry` values, including persisted image bytes,
+ * so a restored session produces the same request the live one did — thinking blocks and
  * their signatures included, which is what keeps the upstream prompt cache
  * matching across a restart.
  *

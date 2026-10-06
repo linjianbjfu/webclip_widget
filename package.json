@@ -24,7 +24,8 @@
     "test:cli": "node --test test-cli/*.test.mjs",
     "test:browser": "node --test backend/src/agent/*.browser.test.mjs test-cli/browser-tests/*.test.mjs",
     "e2e:widgets": "node test-cli/widget-checks.mjs",
-    "test:agent": "node --test backend/src/agent/*.node.test.mjs"
+    "test:agent": "node --test backend/src/agent/*.node.test.mjs",
+    "e2e:capture": "node test-cli/capture-checks.mjs"
   },
   "workspaces": [
     "backend",

@@ -5,11 +5,11 @@
  * Configuration comes from the environment so a token never lands in shell
  * history: WEBCLIP_URL, WEBCLIP_TOKEN, WEBCLIP_USER.
  *
- *   webclip preview --source PATH --out DIR
+ *   webclip preview --out DIR [--source PATH]
  *                                       extract data and open a local widget
  *   webclip sessions                    list
  *   webclip new [title]                 create
- *   webclip prompt <session> <text> [--file PATH]... [--gzip]
+ *   webclip prompt <session> <text> [--file PATH]... [--url URL] [--select] [--gzip]
  *                                       run a turn, optionally uploading the
  *                                       captured page and screenshot
  *   webclip events <session> [since]    replay and follow
@@ -24,6 +24,7 @@
 
 import { createInterface } from "node:readline/promises";
 
+import { saveCaptureDebug } from "./capture-debug.mjs";
 import { artifactReceiver } from "./artifacts.mjs";
 import { Client, cursors } from "./client.mjs";
 import { runChecks } from "./checks.mjs";
@@ -75,9 +76,13 @@ async function main() {
       const files = [];
       const words = [];
       let gzip = false;
+      let url;
+      let select = false;
       let sessionId;
       for (let i = 0; i < args.length; i++) {
-        if (args[i] === "--file") files.push(args[++i]);
+        if (args[i] === "--select") { select = true; }
+        else if (args[i] === "--url") { if(url || !args[i+1] || args[i+1].startsWith('--'))throw new Error('--url requires one HTTP/HTTPS URL'); url = args[++i]; }
+        else if (args[i] === "--file") { if(!args[i+1] || args[i+1].startsWith("--"))throw new Error("--file requires a path"); files.push(args[++i]); }
         else if (args[i] === "--gzip") gzip = true;
         else if (args[i] === "--session") sessionId = args[++i];
         // A bare session id is accepted in the first position only, and only
@@ -88,14 +93,30 @@ async function main() {
         } else words.push(args[i]);
       }
       if (words.length === 0) {
-        console.error('usage: webclip prompt [session] "<message>" [--file PATH]... [--gzip]');
+        console.error('usage: webclip prompt [session] "<message>" [--file PATH]... [--url URL] [--select] [--gzip]');
         console.error("  without a session one is created; --file may be repeated or omitted");
         process.exit(2);
       }
+      const { captureSource, capturePage } = await import('./capture-page.mjs');
+      const source = captureSource({url, files, select});
+      let captured;
+      if (source) {
+        const stop = new AbortController(); const cancel = () => stop.abort();
+        process.on('SIGINT', cancel); process.on('SIGTERM', cancel);
+        try { captured = await capturePage({url, files, select}, {signal: stop.signal}); }
+        finally { process.off('SIGINT', cancel); process.off('SIGTERM', cancel); }
+        if (!captured) { console.log('Capture cancelled; nothing sent.'); return; }
+      }
+      try {
       if (sessionId === undefined) {
-        const { body } = await client.createSession(words.join(" ").slice(0, 60));
+        const { status, body } = await client.createSession(words.join(" ").slice(0, 60));
+        if (status !== 201 || !body?.sessionId) throw new Error(`Create session failed: ${status}`);
         sessionId = body.sessionId;
         console.log(`session ${sessionId}`);
+      }
+      if (captured) {
+        const folder = await saveCaptureDebug({ sessionId, captured });
+        console.log(`Capture saved: ${folder}`);
       }
       const turnId = client.newTurnId();
       const artifacts = artifactReceiver({ sessionId, turnId });
@@ -103,7 +124,8 @@ async function main() {
         sessionId,
         turnId,
         text: words.join(" "),
-        files,
+        files: captured?.files ?? files,
+        capture: captured?.capture,
         gzip,
         onFrame: async frame => {
           render(frame);
@@ -111,10 +133,10 @@ async function main() {
         },
       });
       if (result.status !== 200) {
-        console.error(`\n${result.status}`, JSON.stringify(result.body));
-        process.exit(1);
+        throw new Error(`Prompt failed: ${result.status} ${JSON.stringify(result.body)}`);
       }
       artifacts.finish();
+      } finally { await captured?.dispose(); }
       return;
     }
     case "events": {

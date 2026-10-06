@@ -12,6 +12,8 @@
  * must survive an interruption the keepalive alarm failed to prevent.
  */
 
+import { Buffer } from "node:buffer";
+import { capturePrompt, ensureCaptureBudget } from "./capture-prompt.ts";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
 import { createModelRuntime, resolveProvider } from "./model.ts";
@@ -64,6 +66,13 @@ export async function runTurn(input: RunTurnInput): Promise<void> {
   };
 
   try {
+    const input = store.turnInput(sessionId, turnId);
+    for (const file of input.files) await fs.writeFile(`/${file.name}`, file.data);
+    const text = capturePrompt(turn.prompt, input.capture);
+    const images = (input.capture?.images ?? []).map(image => ({
+      type: 'image' as const, mimeType: image.mimeType,
+      data: Buffer.from(input.files.find(file => file.name === image.file)!.data).toString('base64'),
+    }));
     const config = resolveProvider(env);
     const modelRuntime = await createModelRuntime(config);
     const session = store.session(sessionId);
@@ -124,7 +133,8 @@ export async function runTurn(input: RunTurnInput): Promise<void> {
     });
 
     try {
-      await opened.session.prompt(turn.prompt);
+      if (input.capture) await ensureCaptureBudget(opened.session, text, images.length);
+      await opened.session.prompt(text, { images });
       drain();
     } finally {
       unsubscribe();

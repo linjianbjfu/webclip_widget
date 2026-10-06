@@ -29,7 +29,7 @@ turn 在 SSE 响应返回后继续执行。[alarm 策略](../backend/src/do/turn
 
 ## 系统提示词
 
-[BriefProvider](../backend/src/agent/brief.ts)定义源网页提取、三文件交付、尺寸自动选择和静态截图要求；具体契约见[产物协议](protocol.md#widget-文件与截图)。同一会话的 `system()` 必须保持字节稳定；时间戳、随机值或不稳定顺序会影响上游前缀缓存。`strip()` 提供移除 brief 的接口，但 HTTP 历史当前直接发送 pi 条目，没有调用该投影接口。
+[BriefProvider](../backend/src/agent/brief.ts)定义源网页提取、三文件交付、尺寸自动选择和静态截图要求；具体契约见[产物协议](protocol.md#widget-文件与截图)。同一会话的 `system()` 必须保持字节稳定；时间戳、随机值或不稳定顺序会影响上游前缀缓存。`strip()` 提供移除 brief 的接口，但 HTTP 历史发送 pi 条目和 image_ref 图片引用，未调用 brief 的文本投影接口。
 
 ## 使用边界
 
@@ -37,6 +37,12 @@ turn 在 SSE 响应返回后继续执行。[alarm 策略](../backend/src/do/turn
 - 同一会话同时只接受一个 turn；跨会话并发上限尚未执行。
 - 中止和删除尚未联动取消模型执行，长历史补发受订阅队列限制。
 - 离线客户端可以回放事件元数据，但没有取回产物内容的接口。
-- 上传图片只落盘，不自动作为模型图片输入；渲染通过也不代表提取结果正确。
+- capture 声明的图片进入模型，普通附件只落盘；截图理解和渲染通过仍不代表提取结果正确。
 
 这些限制在[客户端协议](protocol.md)中给出具体行为；运行、验证与部署见[开发指南](development.md)。
+
+## 区域与多模态输入
+
+[Capture 协议](protocol.md#capture区域与图片)关联当前 source.html、区域 XPath 和编号拼图。HTTP 接收器在冲突检查后原子保存本轮输入，执行器在初次运行或恢复时物化相同文件；不会把后续同名文件当成旧轮输入。Store 使用内容哈希和 512 KiB 分块保存不可变输入及消息图片，普通工作区文件仍由 WorkspaceFs 拥有。新增表通过 CREATE TABLE IF NOT EXISTS 接入已有数据库；session 删除清理相关输入和图片。
+
+模型请求通过 SDK images 参数附图；图片持久化为引用，重建模型上下文时还原，HTTP entry 使用引用投影。首次调用、多轮及恢复各自保持本轮 capture 关联。来源 URL 仅用于说明和链接解析，server 不再次抓取原网站。

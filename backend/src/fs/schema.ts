@@ -11,6 +11,9 @@
 export const CHUNK_BYTES = 512 * 1024;
 
 const STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS input_blobs (session_id TEXT NOT NULL, id TEXT NOT NULL, bytes INTEGER NOT NULL, PRIMARY KEY(session_id,id))`,
+  `CREATE TABLE IF NOT EXISTS input_chunks (session_id TEXT NOT NULL, blob_id TEXT NOT NULL, idx INTEGER NOT NULL, data BLOB NOT NULL, PRIMARY KEY(session_id,blob_id,idx))`,
+  `CREATE TABLE IF NOT EXISTS turn_inputs (session_id TEXT NOT NULL, turn_id TEXT NOT NULL, capture TEXT, files TEXT NOT NULL, PRIMARY KEY(session_id,turn_id))`,
   `CREATE TABLE IF NOT EXISTS sessions (
      id             TEXT PRIMARY KEY,
      title          TEXT,

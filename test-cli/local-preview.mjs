@@ -9,7 +9,7 @@ import { bounded, launchBrowser } from "./browser.mjs";
 import { startPreviewServer } from "./preview-server.mjs";
 
 export const SOURCE_WAIT_MS = 3_000;
-export const PREVIEW_USAGE = 'usage: webclip preview --source <source.html> --out <widget-directory>';
+export const PREVIEW_USAGE = 'usage: webclip preview --out <widget-directory> [--source <source.html>]\n  --source defaults to <widget-directory>/capture/source.html';
 
 export function parsePreviewArgs(args) {
   if (args.length === 1 && args[0] === '--help') return { help: true };
@@ -23,7 +23,8 @@ export function parsePreviewArgs(args) {
     if (!value || value.startsWith('--')) throw new Error(`${name} requires a path\n${PREVIEW_USAGE}`);
     options[key] = resolve(value);
   }
-  if (!options.source || !options.out) throw new Error(PREVIEW_USAGE);
+  if (!options.out) throw new Error(PREVIEW_USAGE);
+  options.source ??= join(options.out, 'capture', 'source.html');
   return options;
 }
 

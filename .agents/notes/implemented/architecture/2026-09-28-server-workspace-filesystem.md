@@ -149,7 +149,7 @@ it renders the widget, reports syntax and runtime errors, and returns a screensh
 
 ### 截图的上下文预算
 
-每次预览将截图作为工具结果图片返回模型，原始工具结果随 pi 条目持久化。当前没有移除旧截图的出站投影；多轮预览会增加上下文和存储开销。若实际长会话出现压力，应评估只保留最近截图的出站视图，但不能静默改写已存储条目。截图不属于 `/out` 的三文件交付物。
+每次预览将截图作为工具结果图片返回模型。图片字节按 512 KiB 分块进入 Store 的不可变 blob 存储，pi 条目保留 image_ref，恢复模型上下文时还原图片块；选择理由见[多区域捕获决策](../feature/2026-10-05-region-capture-multimodal-widget.md)。当前没有移除旧截图的出站投影；多轮预览会增加上下文和存储开销。若实际长会话出现压力，应评估只保留最近截图的出站视图，但不能静默改写已存储条目。截图不属于 `/out` 的三文件交付物。
 
 ### iOS 离线
 
@@ -289,7 +289,7 @@ Worker Loader 绑定已在本账号实测可用，不构成障碍。
 
 ### 上传
 
-- multipart 的 `file` 部分写入工作区根目录；gzip 部分解压后落盘，字节与压缩前一致
+- multipart 的 `file` 部分在内存解码；接受 turn 时保存不可变快照，执行器再写入工作区。gzip 解压后字节与压缩前一致
 - 上传名去掉目录成分：`../../etc/passwd` 落为 `/passwd`，写入不能逃出根
 
 ### preview_widget

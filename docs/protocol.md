@@ -61,9 +61,9 @@ Content-Type: application/json
 
 文件写入会话工作区根目录：路径部分和文件名前导点被剥离，名称截为最多 120 个字符，空名称被跳过。同名文件写入同一路径。文件名以 `.gz` 结尾或 MIME 类型为 `application/gzip` 时，服务端解压后保存，并去掉 `.gz` 后缀；不使用 part 的 `Content-Encoding` 判断压缩。
 
-上传截图只会保存文件，不会自动作为图片参数注入本次模型调用。当前接口没有 `images` 字段，图片或文件上传不能代替新 turn 所需的非空 `text`。可以在提示中要求模型读取上传的文件。
+上传文件必须配合非空 `text`。普通附件保留工作区文件语义；要把截图作为本轮模型图片输入，使用下面的 `capture` 元数据显式声明。server 将声明的图片与用户文字、XPath 说明一起送入模型，不再次抓取来源 URL。
 
-已有 `turnId` 的重试不会再次写入上传文件；可用只带 `turnId` 和 `since` 的 JSON 请求重试。对于新的 `turnId`，multipart 文件写入发生在空提示和并发冲突检查之前，因此不能把 HTTP 400 或 409 理解为上传一定未产生副作用。
+已有 `turnId` 的重试复用已接受的输入，不再次写入上传文件；可用只带 `turnId` 和 `since` 的 JSON 请求重试。新请求先在内存中解码和校验，再检查空提示及 busy；HTTP 400/409/413 不覆盖已接受的输入或工作区。接受时原子保存本轮文件快照并保留 turn，执行器开始或恢复时才把该快照写入工作区。普通附件解码后每个最多 16 MiB、合计最多 24 MiB，text 最多 32,000 字符。
 
 ### 幂等与并发
 
@@ -99,7 +99,7 @@ GET /v1/sessions/{id}/events?since=41
 | `stream` | 否 | `{ events: [assistantMessageEvent] }`，pi 的消息增量 |
 | `tool_start` | 否 | `{ toolCallId, name, args }` |
 | `tool_end` | 否 | `{ toolCallId, name, isError }`，完整工具结果在 `entry` 中 |
-| `entry` | 是 | 原始 pi `SessionEntry`；可能包含消息、模型切换或压缩等条目 |
+| `entry` | 是 | pi `SessionEntry` 投影；图片内容使用 image_ref，其余字段保留 |
 | `turn_end` | 是 | `{ turnId, reason, out }` |
 | `error` | 是 | `{ turnId, code, message, retryable }` |
 | `stream_end` | 否 | `{ sessionBusy: false }`，连接结束 |
@@ -107,6 +107,38 @@ GET /v1/sessions/{id}/events?since=41
 `reason` 为 `completed`、`aborted` 或 `failed`。一次历史回放可能包含多个 `turn_end`，它们都不是连接结束信号。
 
 事件日志支持 `out_file`，但当前执行路径没有发布它；也没有独立发布 `tool_update` 或 `compaction` 事件。客户端不能依赖这些进度通知。`entry` 没有统一添加服务端 `turnId` 包装，也没有经过面向用户的文本投影；不能把所有条目直接当作聊天正文。
+
+### Capture：区域与图片
+
+multipart 的可选文本字段 `capture` 是 JSON，version 为 1。主来源固定为本次上传的 `source.html`，内容是捕获时的主页面 DOM；原始请求 text 单独保留。
+
+```json
+{
+  "version": 1,
+  "mode": "regions",
+  "source": "source.html",
+  "requestUrl": "https://example.com/quote",
+  "pageUrl": "https://example.com/quote",
+  "baseUrl": "https://example.com/quote",
+  "viewport": { "width": 1280, "height": 900 },
+  "regions": [
+    { "id": "r1", "xpath": "//*[@id='quote']", "rect": { "x": 20, "y": 80, "width": 600, "height": 300 }, "text": "当前股价", "imageId": "regions-image", "imageRect": { "x": 8, "y": 32, "width": 600, "height": 300 } }
+  ],
+  "images": [
+    { "id": "regions-image", "file": "regions.png", "width": 616, "height": 340, "originalWidth": 1280, "originalHeight": 900, "mimeType": "image/png", "bytes": 12000, "role": "montage" }
+  ]
+}
+```
+
+示例中的 bytes 必须替换为实际图片字节数。区域 rect 是主文档 CSS px；imageRect 是拼图中对应内容块的像素范围，不含编号栏。`imageId` 与 `imageRect` 必须同时出现或同时省略。仅文本区域保留非空 text 与 XPath；regions 模式最多 8 个区域，可没有图片，或者共享唯一一张 montage 图片。imageRect 必须在图片内且各区域内容块不重叠。page 模式 regions 为空，必须有一张 full-page 图片。
+
+图片格式限定 PNG/JPEG，二进制内容作为同名 file 部分上传。server 解码验证实际格式与尺寸，不能仅修改 MIME/扩展名绕过校验。拼图宽高最多 1200px，整页图最多 768px，每轮图片最多 2 MiB；capture JSON 最多 64 KiB，XPath 最多 4096 字符，每个区域 text 最多 4000 字符。非法结构、重复文件或引用缺失返回 400，尺寸/字节超限返回 413。
+
+source.html 与图片作为不可变的本轮输入持久化；同名后续上传不改变旧输入。只有 capture 声明的图片自动进入本轮模型消息，未声明的普通附件不作为图片自动附加。纯文本选区不会补发整页图。系统 brief 保持稳定，动态 XPath、编号和图片说明放在 user 消息。
+
+接近上下文上限时会先尝试压缩历史，仍不足则以失败 turn 和 `context_budget_exceeded` 诊断返回。预算包含本轮新增文字/图片与输出余量；图片 token 是保守估计，不能代替上游实际计数。
+
+新持久化的 pi 消息图片块投影为 `{type:"image_ref", version:1, mimeType, sha256, bytes}`，没有 base64 data。图片内容在内部按 512 KiB 分块，引用和事件原子提交；重建模型上下文时还原 SDK image 块。旧事件中内嵌的 image 块仍可读取。HTTP 实时 entry 与历史 entry 都使用引用投影，客户端不能把 image_ref 原样交给模型；当前没有图片下载端点。
 
 ### 产物
 

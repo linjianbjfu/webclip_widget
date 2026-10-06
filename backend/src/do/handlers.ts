@@ -11,7 +11,8 @@ import { Hub } from "./hub.ts";
 import { encodeFrame, kindToEvent, streamEndFrame, type Frame } from "./sse.ts";
 import type { EventRow, Store } from "./store.ts";
 import { isValidTurnId, type PromptRequest } from "../protocol.ts";
-import { isMultipart, parseMultipartPrompt, type UploadedFile } from "./upload.ts";
+import { CaptureError } from "../capture.ts";
+import { isMultipart, parseMultipartPrompt, type ParsedPrompt } from "./upload.ts";
 import type { WorkspaceFs } from "../fs/workspace-fs.ts";
 
 const SSE_HEADERS = {
@@ -97,39 +98,25 @@ function events(url: URL, sessionId: string, deps: HandlerDeps): Response {
 }
 
 async function prompt(request: Request, sessionId: string, deps: HandlerDeps): Promise<Response> {
-  const multipart = isMultipart(request);
-  let turnId = "";
-  let text = "";
-  let since = 0;
-  let uploaded: UploadedFile[] = [];
-
-  if (multipart) {
-    // Files are written only once the turn is known to be new: a retry of the
-    // same turnId must not re-read a multi-megabyte body, which is where the
-    // idempotency rule earns its keep.
-    const peek = request.clone();
-    const head = await peek.formData().catch(() => null);
-    turnId = String(head?.get("turnId") ?? "");
-    if (!isValidTurnId(turnId)) return Response.json({ error: "invalid_turn_id" }, { status: 400 });
+  let turnId = "", text = "", since = 0;
+  let parsed: ParsedPrompt | undefined;
+  if (isMultipart(request)) {
+    const form = await request.formData().catch(() => null);
+    if (!form) return Response.json({error:'invalid_multipart'}, {status:400});
+    turnId = String(form.get('turnId') ?? '');
+    if (!isValidTurnId(turnId)) return Response.json({error:'invalid_turn_id'}, {status:400});
+    text = String(form.get('text') ?? '').trim(); since = Number(form.get('since') ?? 0) || 0;
     if (!deps.store.turn(sessionId, turnId)) {
-      const parsed = await parseMultipartPrompt(request, deps.workspace(sessionId));
-      text = parsed.text.trim();
-      since = parsed.since;
-      uploaded = parsed.files;
-    } else {
-      text = String(head?.get("text") ?? "").trim();
-      since = Number(head?.get("since") ?? "0") || 0;
+      try { parsed = await parseMultipartPrompt(form); text = parsed.text.trim(); since = parsed.since; }
+      catch (error) { return Response.json({error:'invalid_capture',message:String(error)}, {status:error instanceof CaptureError ? error.status : 400}); }
     }
   } else {
     const body = await request.json<PromptRequest>().catch(() => null);
-    if (!body || !isValidTurnId(body.turnId)) {
-      return Response.json({ error: "invalid_turn_id" }, { status: 400 });
-    }
-    turnId = body.turnId;
-    text = body.text?.trim() ?? "";
-    since = Number.isFinite(body.since) ? Number(body.since) : 0;
+    if (!body || !isValidTurnId(body.turnId)) return Response.json({error:'invalid_turn_id'}, {status:400});
+    turnId = body.turnId; text = body.text?.trim() ?? ''; since = Number.isFinite(body.since) ? Number(body.since) : 0;
   }
-  void uploaded;
+  if (!deps.store.session(sessionId)) return Response.json({error:"not_found"}, {status:404});
+  if (text.length > 32_000) return Response.json({error:'prompt_too_large'}, {status:413});
 
   const body = { turnId, text, since } satisfies PromptRequest;
   const existing = deps.store.turn(sessionId, body.turnId);
@@ -156,7 +143,7 @@ async function prompt(request: Request, sessionId: string, deps: HandlerDeps): P
 
   const stream = deps.hub.subscribe(sessionId, backlog);
   if (!existing) {
-    deps.store.beginTurn(sessionId, body.turnId, text);
+    deps.store.acceptTurn(sessionId, body.turnId, text, parsed?.files ?? [], parsed?.capture ?? null);
     deps.scheduleKeepalive();
     // Not awaited: awaiting would hold the response until the whole turn
     // finished, and there would be no streaming. The turn's survival rests on

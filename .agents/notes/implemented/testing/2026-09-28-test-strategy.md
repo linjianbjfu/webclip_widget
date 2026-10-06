@@ -90,6 +90,10 @@ CLI 的文件系统行为由 Node 内置测试运行器执行，`test-cli/*.test
 
 真实模型的尺寸选择与 Browser Run 工具链由 `npm run e2e:widgets` 验证，使用固定 HTML 并单独计费。三文件与静态截图的理由见[静态 widget 决策](../feature/2026-09-30-static-ios-widget-artifacts.md)。
 
+### 多区域捕获与图片输入
+
+capture 测试在 Workers 内校验 metadata、PNG/JPEG 解码、不可变输入和图片引用恢复；SDK 测试通过真实 HTTP 请求确认图片及 XPath 被编码进网关请求。CLI 浏览器测试实际拖动选区、预览拼图、取消和清空，并验证普通主文档 XPath 与捕获 HTML 的对应。`npm run e2e:capture` 用像素中独有的随机校验码和真实模型分别验证拼图/整页理解及 widget 生成，不属于默认无凭据门禁。约定见[多区域捕获决策](../feature/2026-10-05-region-capture-multimodal-widget.md)。
+
 ### 截图不做像素断言
 
 `preview_widget` 返回截图、错误列表和 DOM 文本三样，**断言只写在后两样上**。字体渲染、抗锯齿、Chromium 版本都会让像素漂移，像素断言会变成一个周期性误报的来源，最终被人为忽略——那比没有断言更糟。

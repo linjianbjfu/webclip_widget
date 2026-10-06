@@ -8,7 +8,7 @@ Status: implemented
 
 ## 决策
 
-`preview --source <HTML> --out <目录>` 是独立 CLI 命令，在服务端配置和 Client 初始化前分流，不依赖 WEBCLIP 环境变量。out 必须已有 extra.js、widget.html、meta.json，允许包含 data.json 和其他文件；输入路径相对于工作目录，输出不追加会话或轮次目录。用法与浏览器配置由[CLI 文档](../../../../docs/test-cli.md#本地预览-widget)拥有。
+`preview --out <目录> [--source <HTML>]` 是独立 CLI 命令，在服务端配置和 Client 初始化前分流，不依赖 WEBCLIP 环境变量。未传 --source 时使用 out/capture/source.html，显式传入则使用指定文件；缺失时直接报错，不搜索其他路径。out 必须已有 extra.js、widget.html、meta.json，允许包含 data.json 和其他文件；输入路径相对于工作目录，输出不追加会话或轮次目录。用法与浏览器配置由[CLI 文档](../../../../docs/test-cli.md#本地预览-widget)拥有。
 
 源 HTML 在独立、可见 Chrome/Chromium 中通过 file URL 加载，正常执行网页脚本。用户选择在 load 之后固定等待 3 秒，再直接求值 extra.js；没有选择器或等待时长参数。等待可中止。提取结果与 backend 使用同一 extractionExpression 校验，在浏览器中拒绝 Promise 和非 JSON 对象，避免自动等待 Promise 隐藏不合规返回值。backend 使用惰性捕获 DOM，CLI 使用实际加载后的 document，各自保留页面加载方式。
 

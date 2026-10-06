@@ -33,7 +33,7 @@ npm run dev
 |---|---|
 | `npm run typecheck` | TypeScript 类型检查 |
 | `npm test` | Workers runtime 中的测试 |
-| `npm run test:agent` | 真实 pi SDK 的 prompt 加载、UTF-8 读取和编辑 |
+| `npm run test:agent` | 真实 pi SDK 的 prompt、UTF-8 工具及多模态网关请求 |
 | `npm run test:cli` | Node 中的 bundle 保存、本地预览参数/等待/写入/HTTP 服务及 CLI 命令入口 |
 | `npm run test:browser` | 本地 Chrome 中的提取、三档布局、溢出/动画及本地预览生命周期 |
 | `npm run verify-docs` | README、根指令和 docs 中的本地 Markdown 链接目标 |
@@ -107,3 +107,13 @@ npm run deploy
 不要把这三个 secret 以空值声明在 `backend/wrangler.jsonc` 的 `vars` 中，空值会覆盖 secret。部署后将 `WEBCLIP_URL` 指向返回的服务地址，再运行上述认证与端到端检查。
 
 共享密钥只限制服务访问，不能验证用户身份。持有密钥的人可以指定任意 `x-webclip-user`；真实用户接入前需要独立的身份验证方案。
+
+### 框选与图片理解验证
+
+```bash
+npm run e2e:capture
+```
+
+需要已运行的 backend 和 WEBCLIP_URL/WEBCLIP_TOKEN。该检查启动本地测试网页，分别通过真实框选拼图和无选区整页流程发送请求，调用真实模型并生成 widget。校验码仅画在 canvas 像素上，不出现在提交的 HTML/文本中；必须由模型识别校验码且最终 widget 预览通过。该检查有模型费用，产物留在 downloads，测试会话与临时捕获文件会清理。
+
+新增 capture PNG/JPEG 验证在 Workers 中实际解码，依赖由 backend 的 package.json 拥有。输入与图片引用存储、旧格式恢复及接受请求的副作用顺序由 Workers 测试覆盖；框选、清空、取消、尺寸缩放和图片/DOM 对应由真实浏览器测试覆盖。

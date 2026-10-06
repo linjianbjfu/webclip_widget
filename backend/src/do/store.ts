@@ -8,6 +8,14 @@
  * therefore reads `kind = 'pi_entry'` only, while resumption reads everything.
  */
 
+import { Buffer } from 'node:buffer';
+import { createHash } from 'node:crypto';
+import { CHUNK_BYTES } from '../fs/schema.ts';
+import type { Capture } from '../capture.ts';
+
+export interface InputFile { name: string; data: Uint8Array }
+interface FileReference { name: string; blob: string }
+
 export type EventKind = "pi_entry" | "out_file" | "turn_end" | "error";
 export type TurnStatus = "running" | "completed" | "aborted" | "failed";
 
@@ -132,6 +140,9 @@ export class Store {
       .toArray();
     for (const file of files) this.#sql.exec(`DELETE FROM chunks WHERE file_id = ?`, file.id);
     this.#sql.exec(`DELETE FROM files WHERE session_id = ?`, id);
+    this.#sql.exec(`DELETE FROM input_chunks WHERE session_id = ?`, id);
+    this.#sql.exec(`DELETE FROM input_blobs WHERE session_id = ?`, id);
+    this.#sql.exec(`DELETE FROM turn_inputs WHERE session_id = ?`, id);
     this.#sql.exec(`DELETE FROM events WHERE session_id = ?`, id);
     this.#sql.exec(`DELETE FROM turns WHERE session_id = ?`, id);
     this.#sql.exec(`DELETE FROM sessions WHERE id = ?`, id);
@@ -185,6 +196,65 @@ export class Store {
       prompt,
     );
     return this.turn(sessionId, turnId)!;
+  }
+
+  /** Atomically accept immutable decoded inputs and reserve the turn before any workspace writes. */
+  acceptTurn(sessionId: string, turnId: string, prompt: string, files: InputFile[], capture: Capture | null): void {
+    this.#transaction(() => {
+      const refs = files.map(file => ({ name: file.name, blob: this.#putBlob(sessionId, file.data) }));
+      this.beginTurn(sessionId, turnId, prompt);
+      this.#sql.exec('INSERT INTO turn_inputs (session_id,turn_id,capture,files) VALUES (?,?,?,?)', sessionId, turnId, capture ? JSON.stringify(capture) : null, JSON.stringify(refs));
+    });
+  }
+
+  turnInput(sessionId: string, turnId: string): { capture: Capture | null; files: InputFile[] } {
+    const row = this.#sql.exec<{capture: string | null; files: string}>('SELECT capture,files FROM turn_inputs WHERE session_id=? AND turn_id=?', sessionId, turnId).toArray()[0];
+    return row ? { capture: row.capture ? JSON.parse(row.capture) as Capture : null,
+      files: (JSON.parse(row.files) as FileReference[]).map(file => ({name: file.name, data: this.#getBlob(sessionId, file.blob)})) } : {capture: null, files: []};
+  }
+
+  #putBlob(sessionId: string, bytes: Uint8Array): string {
+    const id = createHash('sha256').update(bytes).digest('hex');
+    if (!this.#sql.exec('SELECT id FROM input_blobs WHERE session_id=? AND id=?', sessionId, id).toArray().length) {
+      this.#sql.exec('INSERT INTO input_blobs (session_id,id,bytes) VALUES (?,?,?)', sessionId, id, bytes.length);
+      for (let offset = 0; offset < bytes.length; offset += CHUNK_BYTES) {
+        this.#sql.exec('INSERT INTO input_chunks (session_id,blob_id,idx,data) VALUES (?,?,?,?)', sessionId, id, offset / CHUNK_BYTES, bytes.slice(offset, offset + CHUNK_BYTES));
+      }
+    }
+    return id;
+  }
+
+  #getBlob(sessionId: string, id: string): Uint8Array {
+    const row = this.#sql.exec<{bytes: number}>('SELECT bytes FROM input_blobs WHERE session_id=? AND id=?', sessionId, id).toArray()[0];
+    if (!row) throw new Error('Missing persisted image/input blob');
+    const bytes = new Uint8Array(row.bytes);
+    const chunks = this.#sql.exec<{data: ArrayBuffer; idx: number}>('SELECT idx,data FROM input_chunks WHERE session_id=? AND blob_id=? ORDER BY idx', sessionId, id).toArray();
+    for (const chunk of chunks) bytes.set(new Uint8Array(chunk.data), chunk.idx * CHUNK_BYTES);
+    if (createHash('sha256').update(bytes).digest('hex') !== id) throw new Error('Persisted image/input integrity mismatch');
+    return bytes;
+  }
+
+  #imageReferences(sessionId: string, payload: unknown): string {
+    return JSON.stringify(payload, (_key, value: unknown) => {
+      if (value && typeof value === 'object' && 'type' in value && value.type === 'image'
+        && 'data' in value && typeof value.data === 'string' && 'mimeType' in value && typeof value.mimeType === 'string') {
+        const {data, ...rest} = value;
+        const bytes = Buffer.from(data, 'base64');
+        return {...rest, type: 'image_ref', version: 1, sha256: this.#putBlob(sessionId, bytes), bytes: bytes.length};
+      }
+      return value;
+    });
+  }
+
+  #restoreImages(sessionId: string, payload: string): unknown {
+    return JSON.parse(payload, (_key, value: unknown) => {
+      if (value && typeof value === 'object' && 'type' in value && value.type === 'image_ref' && 'version' in value && value.version === 1
+        && 'sha256' in value && typeof value.sha256 === 'string') {
+        const {sha256, version, bytes, ...rest} = value as Record<string, unknown> & {sha256: string};
+        return {...rest, type: 'image', data: Buffer.from(this.#getBlob(sessionId, sha256)).toString('base64')};
+      }
+      return value;
+    });
   }
 
   markProgress(sessionId: string, turnId: string): void {
@@ -241,6 +311,7 @@ export class Store {
         cutoff,
       )
       .toArray()[0]!.n;
+    this.#sql.exec(`DELETE FROM turn_inputs WHERE EXISTS (SELECT 1 FROM turns WHERE turns.session_id=turn_inputs.session_id AND turns.turn_id=turn_inputs.turn_id AND status <> 'running' AND ended_at < ?)`, cutoff);
     this.#sql.exec(
       `DELETE FROM turns WHERE status <> 'running' AND ended_at IS NOT NULL AND ended_at < ?`,
       cutoff,
@@ -279,7 +350,7 @@ export class Store {
         seq += 1;
         // Serialize before inserting: a payload that cannot be stringified
         // must abort the whole batch, not leave earlier rows behind.
-        const payload = JSON.stringify(input.payload);
+        const payload = input.kind === 'pi_entry' ? this.#imageReferences(sessionId, input.payload) : JSON.stringify(input.payload);
         this.#sql.exec(
           `INSERT INTO events (session_id, seq, turn_id, kind, payload) VALUES (?, ?, ?, ?, ?)`,
           sessionId,
@@ -306,7 +377,7 @@ export class Store {
   }
 
   /**
-   * Raw pi entries, in order — the only input to rebuilding a session's context.
+   * Pi entries with image references restored, in order, for rebuilding model context.
    *
    * `excludeTurn` drops one turn's records. Resuming an interrupted turn needs
    * this: `AgentSession.prompt()` is the only way to drive the loop and it
@@ -328,6 +399,6 @@ export class Store {
             sessionId,
             excludeTurn,
           );
-    return rows.toArray().map(row => ({ seq: row.seq, entry: JSON.parse(row.payload) as unknown }));
+    return rows.toArray().map(row => ({ seq: row.seq, entry: this.#restoreImages(sessionId, row.payload) }));
   }
 }

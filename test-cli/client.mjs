@@ -85,13 +85,14 @@ export class Client {
    *   frames, to reproduce a client that vanishes mid-turn.
    * @param {string[]} [options.files] Paths to upload into the workspace root.
    *   Their presence switches the request to multipart.
+   * @param {import("../backend/src/capture.ts").Capture} [options.capture] Captured DOM, regions and image metadata.
    * @param {boolean} [options.gzip] Compress text uploads. The server decodes
    *   them before storing, so later readers still see the real bytes.
    * @param {(frame: import("./sse.mjs").Frame) => void | Promise<void>} [options.onFrame]
    */
   async prompt(options) {
     const turnId = options.turnId ?? this.newTurnId();
-    const multipart = (options.files ?? []).length > 0;
+    const multipart = (options.files ?? []).length > 0 || options.capture !== undefined;
 
     const request = multipart
       ? {
@@ -210,6 +211,7 @@ export function assertNoGapOrRepeat(before, after, whole, label) {
 async function buildForm(turnId, options) {
   const form = new FormData();
   form.set("turnId", turnId);
+  if (options.capture) form.set("capture", JSON.stringify(options.capture));
   if (options.text !== undefined) form.set("text", options.text);
   if (options.since !== undefined) form.set("since", String(options.since));
 

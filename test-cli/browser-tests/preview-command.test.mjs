@@ -15,7 +15,8 @@ test('actual CLI opens HTTP output without credentials and SIGINT/SIGTERM dispos
   t.after(()=>rm(root,{recursive:true,force:true}));
   const out=join(root,'out'); await mkdir(out);
   const profiles=join(root,'profiles'); await mkdir(profiles);
-  const source=join(root,'source.html');
+  await mkdir(join(out,'capture'));
+  const source=join(out,'capture','source.html');
   await writeFile(source,'<p id="value">0</p><script>document.querySelector("#value").textContent="19"</script>');
   await writeFile(join(out,'extra.js'),'(() => ({value:Number(document.querySelector("#value").textContent)}))()');
   await writeFile(join(out,'meta.json'),'{"size":"small"}');
@@ -30,7 +31,7 @@ child.on('close',code=>{process.exitCode=code??0;});\n`,{mode:0o755});
   const env={...process.env,CHROME_EXECUTABLE:launcher,TMPDIR:profiles};
   delete env.WEBCLIP_URL; delete env.WEBCLIP_TOKEN;
   for (const [signal,stage] of [['SIGINT','ready'],['SIGTERM','waiting']]) {
-    const child=spawn(process.execPath,[fileURLToPath(new URL('../index.mjs',import.meta.url)),'preview','--source',source,'--out',out],{env,stdio:['ignore','pipe','pipe']});
+    const child=spawn(process.execPath,[fileURLToPath(new URL('../index.mjs',import.meta.url)),'preview','--out',out],{env,stdio:['ignore','pipe','pipe']});
     let stdout='',stderr='';
     const closed=new Promise((resolve,reject)=>{child.once('close',(code,signal)=>resolve({code,signal}));child.once('error',reject);});
     t.after(async()=>{if(child.exitCode===null&&child.signalCode===null)child.kill('SIGTERM');await closed;});

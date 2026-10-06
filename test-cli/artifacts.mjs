@@ -11,6 +11,10 @@ function component(value, label) {
   return value;
 }
 
+export function artifactDirectory(sessionId, root = resolve("downloads")) {
+  return join(root, component(sessionId, "sessionId"));
+}
+
 export function validateArtifacts(out) {
   if (!Array.isArray(out)) throw new Error("turn_end.out must be an array");
   validateWidgetPaths(out.map(file => file?.path));
@@ -31,7 +35,7 @@ export function validateArtifacts(out) {
 /** Validate and stage all files before replacing each artifact; unrelated files are preserved. */
 export async function saveArtifacts({ sessionId, out, root = resolve("downloads") }) {
   const files = validateArtifacts(out);
-  const target = join(root, component(sessionId, "sessionId"));
+  const target = artifactDirectory(sessionId, root);
   await mkdir(root, { recursive: true });
   const lock = `${target}.lock`;
   await mkdir(lock);

@@ -161,7 +161,7 @@ CREATE TABLE chunks (file_id INTEGER, idx INTEGER, data BLOB, PRIMARY KEY (file_
 
 这与[下面否决的](#曾考虑的替代方案)"单独建表持久化 token 增量"不冲突：那条否决的是**增量**（一轮几千条），这里是每轮几条协议事件，量级相差三个数量级。
 
-edge-mac-widget 的 `HistoryMessage` 会投影 `StoredEntry` 并剥离 operating brief。本项目当前 HTTP 路径直接发送原始 pi 条目，尚未接入面向用户的投影；不能承诺过滤内部条目或提示词。
+edge-mac-widget 的 `HistoryMessage` 会投影 `StoredEntry` 并剥离 operating brief。HTTP 历史发送 pi 条目与 image_ref 图片引用投影；文本仍未经过面向用户的 brief 过滤。图片输入、引用持久化与恢复由[多区域捕获决策](../feature/2026-10-05-region-capture-multimodal-widget.md)拥有。
 
 ### 不持久化 token 增量
 
@@ -194,7 +194,7 @@ interface ThinkingContent {
 }
 ```
 
-恢复会话走的是 `buildSessionContext(原始条目)`，不经过任何投影，因此 thinking 与其签名原样回到上下文，发给上游的请求与当初一致，缓存前缀不因恢复而断裂。当前 HTTP 历史发送原始 pi 条目，包含 thinking 内容；CLI 自己选择呈现哪些部分，不能把 CLI 的过滤理解为服务端协议保证。
+恢复会话先还原图片引用，再将 pi 条目交给 buildSessionContext；thinking 与其签名保持原样。HTTP 历史提供图片引用投影，其他字段仍包含 thinking 内容；CLI 自己选择呈现哪些部分，不能把 CLI 的过滤理解为服务端协议保证。
 
 这意味着**续传粒度是条目而非 token**：断线期间半截的消息，客户端要等它完成才看得到。对一个本来就会离线几分钟的移动端，这是正确的取舍——它需要的是结果，不是错过的字。代价是省掉了数量级更高的写入。
 
@@ -297,9 +297,9 @@ HTTP 请求、SSE 载荷、状态码和当前限制由[客户端协议](../../..
 
 #### 上传编码
 
-多个文件由 multipart 承载，压缩用 Workers 原生的 gzip 解码，不增加需要中央目录解析和额外依赖的 zip 容器。已有实测中 30 KB 的重复 HTML 压缩到 87 字节并无损还原。当前按 `.gz` 后缀或 `application/gzip` MIME 类型识别；截图只落盘，不自动作为图片输入注入模型。
+多个文件由 multipart 承载，压缩用 Workers 原生的 gzip 解码，不增加需要中央目录解析和额外依赖的 zip 容器。已有实测中 30 KB 的重复 HTML 压缩到 87 字节并无损还原。当前按 `.gz` 后缀或 `application/gzip` MIME 类型识别；capture 声明的拼图或整页图自动进入模型输入，普通附件保留文件语义。
 
-相同 `turnId` 的重试不再写入文件，客户端可以改用 JSON 重试，避免重复上传。新 turn 的文件写入先于空提示与并发检查，所以被拒绝的 multipart 请求仍可能改变工作区。
+相同 `turnId` 的重试不再写入文件，客户端可以改用 JSON 重试，避免重复上传。新 turn 的输入在空提示、校验和并发检查通过后原子保存；执行器随后写入工作区，失败请求不会覆盖正在运行的输入。
 
 #### 幂等、续传与分组
 
@@ -423,7 +423,7 @@ session 作用域唯一的实质优势是消除竞态，而那个问题由"`POST
 
 **密钥门禁**（`backend/src/auth.test.ts`）：未配置 token 时拒绝一切请求；缺失、格式错误、值错误均 401；token 的前缀与超集都被拒绝，比较为常数时间；错误响应不含 token。
 
-**上传**（`backend/src/do/upload.test.ts`）：multipart 部分写入工作区根；gzip 部分解压后落盘；上传名去掉目录成分。
+**上传**（`backend/src/do/upload.test.ts`）：multipart 部分在内存解码，gzip 解压后返回字节；上传名去掉目录成分。capture-storage 测试验证接受时的不可变输入和拒绝/重复请求无覆盖。
 
 ### 部署后实跑
 

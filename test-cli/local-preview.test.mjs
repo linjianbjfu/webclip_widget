@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -21,9 +21,10 @@ async function fixture(t) {
   return { root, source, out };
 }
 
-test('preview arguments require only source and out, without extra wait options', () => {
+test('preview arguments require out and default source to its capture directory', () => {
   assert.deepEqual(parsePreviewArgs(['--out', 'out', '--source', 'source.html']), { out: resolve('out'), source: resolve('source.html') });
   assert.deepEqual(parsePreviewArgs(['--help']), { help: true });
+  assert.deepEqual(parsePreviewArgs(['--out', 'out']), { out: resolve('out'), source: resolve('out', 'capture', 'source.html') });
   for (const args of [[], ['--source'], ['--out','--source','x'], ['--source','x'],
     ['--source','x','--source','y','--out','z'], ['--source','x','--out','z','--wait-for-selector','p'],
     ['--source','x','--out','z','extra'], ['--help','--out','z']]) assert.throws(() => parsePreviewArgs(args));
@@ -45,6 +46,19 @@ test('input checks require the three artifacts, allow existing data and reject i
   await assert.rejects(previewInputs({ ...input, source: input.out }), /Expected a file/);
   await assert.rejects(previewInputs({ ...input, out: input.source }), /Not a widget directory/);
   assert.equal(await readFile(join(input.out, 'data.json'), 'utf8'), '{"old":true}');
+});
+
+test('default capture source is required when omitted, while explicit source takes precedence', async t => {
+  const input = await fixture(t);
+  const options = parsePreviewArgs(['--out', input.out]);
+  await assert.rejects(previewInputs(options), error => error.code === 'ENOENT' && error.path === join(input.out,'capture','source.html'));
+  await mkdir(join(input.out, 'capture'));
+  await writeFile(join(input.out, 'capture', 'source.html'), '<p>captured</p>');
+  assert.equal((await previewInputs(options)).source, await realpath(join(input.out,'capture','source.html')));
+  const explicit = parsePreviewArgs(['--out', input.out, '--source', input.source]);
+  assert.equal((await previewInputs(explicit)).source, await realpath(input.source));
+  await rm(input.source);
+  await assert.rejects(previewInputs(explicit), error => error.code === 'ENOENT' && error.path === input.source);
 });
 
 test('load completes before the fixed three-second wait and extraction follows the wait', async () => {

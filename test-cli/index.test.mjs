@@ -36,6 +36,7 @@ test('prompt, chat and live events publish bundles through actual CLI entry poin
   const liveTurn = randomUUID();
   const server = createServer(async (req, res) => {
     if (req.url === '/v1/sessions') {
+      res.statusCode = 201;
       res.setHeader('content-type', 'application/json');
       res.end(JSON.stringify({ sessionId }));
       return;
