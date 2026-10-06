@@ -3,7 +3,7 @@ export const CAPTURE_LIMITS = { regions: 8, imageBytes: 2 * 1024 * 1024, sourceB
 export interface Rect { x: number; y: number; width: number; height: number }
 export interface CaptureRegion {
   id: string; xpath: string; rect: Rect; text: string;
-  imageId?: string; imageRect?: Rect;
+  sourceXPath?: string; imageId?: string; imageRect?: Rect;
 }
 export interface CaptureImage {
   id: string; file: string; width: number; height: number; originalWidth: number; originalHeight: number;
@@ -57,6 +57,7 @@ export function parseCapture(value: unknown): Capture {
     if (!/^r[1-9][0-9]*$/.test(id) || ids.has(id)) throw new CaptureError('Invalid/duplicate region id');
     ids.add(id);
     const region: CaptureRegion = { id, xpath: string(r.xpath, 4096), rect: rectangle(r.rect), text: typeof r.text === 'string' && r.text.length <= 4000 ? r.text : (() => { throw new CaptureError('Invalid region text'); })() };
+    if (r.sourceXPath !== undefined) region.sourceXPath = string(r.sourceXPath, 4096);
     if (r.imageId !== undefined || r.imageRect !== undefined) {
       const image = images[0], rect = rectangle(r.imageRect);
       if (!image || r.imageId !== image.id || rect.x + rect.width > image.width || rect.y + rect.height > image.height) throw new CaptureError('Region image reference/bounds mismatch');

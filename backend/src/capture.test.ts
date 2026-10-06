@@ -11,6 +11,12 @@ export function fixtureCapture(): {capture: Capture; png: Buffer} {
   return {png,capture:{version:1,mode:'regions',source:'source.html',viewport:{width:1280,height:900},regions:[{id:'r1',xpath:"//*[@id='quote']",rect:{x:0,y:0,width:20,height:20},text:'quote',imageId:'image',imageRect:{x:0,y:0,width:20,height:20}}],images:[{id:'image',file:'regions.png',width:20,height:20,originalWidth:20,originalHeight:20,bytes:png.length,mimeType:'image/png',role:'montage'}]}};
 }
 describe('capture contract',()=>{
+  it('preserves optional live sourceXPath and rejects invalid values',()=>{
+    const {capture}=fixtureCapture();
+    const withPath={...capture,regions:capture.regions.map(r=>({...r,sourceXPath:'/html[1]/body[1]/a[1]'}))};
+    expect(parseCapture(withPath)).toEqual(withPath);
+    for(const sourceXPath of ['',null,42,'a'.repeat(4097)])expect(()=>parseCapture({...capture,regions:capture.regions.map(r=>({...r,sourceXPath}))})).toThrow();
+  });
   it('accepts ordered region montage, text-only capture and full-page image',()=>{
     const {capture,png}=fixtureCapture();expect(parseCapture(capture)).toEqual(capture);validateCaptureImage(png,capture.images[0]!);
     expect(parseCapture({...capture,images:[],regions:[{id:'r3',xpath:'/html/body/p',rect:{x:0,y:0,width:100,height:20},text:'Only text'}]}).images).toEqual([]);

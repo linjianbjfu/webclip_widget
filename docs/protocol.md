@@ -132,7 +132,9 @@ multipart 的可选文本字段 `capture` 是 JSON，version 为 1。主来源�
 
 示例中的 bytes 必须替换为实际图片字节数。区域 rect 是主文档 CSS px；imageRect 是拼图中对应内容块的像素范围，不含编号栏。`imageId` 与 `imageRect` 必须同时出现或同时省略。仅文本区域保留非空 text 与 XPath；regions 模式最多 8 个区域，可没有图片，或者共享唯一一张 montage 图片。imageRect 必须在图片内且各区域内容块不重叠。page 模式 regions 为空，必须有一张 full-page 图片。
 
-图片格式限定 PNG/JPEG，二进制内容作为同名 file 部分上传。server 解码验证实际格式与尺寸，不能仅修改 MIME/扩展名绕过校验。拼图宽高最多 1200px，整页图最多 768px，每轮图片最多 2 MiB；capture JSON 最多 64 KiB，XPath 最多 4096 字符，每个区域 text 最多 4000 字符。非法结构、重复文件或引用缺失返回 400，尺寸/字节超限返回 413。
+区域 `xpath` 定位上传的 source.html。CLI 对捕获 HTML 做解析器规范化；若实时网页路径与捕获路径不同，可选 `sourceXPath` 记录实时路径，路径相同时省略。两者均为非空字符串，各最多 4096 字符。模型用 xpath 检查捕获数据，并参考 sourceXPath 理解原网页位置；未来提取仍需选择稳定锚点。旧请求无需新增字段。
+
+图片格式限定 PNG/JPEG，二进制内容作为同名 file 部分上传。server 解码验证实际格式与尺寸，不能仅修改 MIME/扩展名绕过校验。拼图宽高最多 1200px，整页图最多 768px，每轮图片最多 2 MiB；capture JSON 最多 64 KiB，每个区域 text 最多 4000 字符。非法结构、重复文件或引用缺失返回 400，尺寸/字节超限返回 413。
 
 source.html 与图片作为不可变的本轮输入持久化；同名后续上传不改变旧输入。只有 capture 声明的图片自动进入本轮模型消息，未声明的普通附件不作为图片自动附加。纯文本选区不会补发整页图。系统 brief 保持稳定，动态 XPath、编号和图片说明放在 user 消息。
 

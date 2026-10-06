@@ -76,21 +76,64 @@ export function installSelectionUI() {
   addEventListener('blur',()=>{start=null;drag?.remove();});
   addEventListener('scroll',draw,{passive:true});addEventListener('resize',draw);draw();
   api.snapshot = () => {
+    const literal = value => !value.includes("'") ? `'${value}'` : !value.includes('"') ? `"${value}"` : `concat(${value.split("'").map(part=>`'${part}'`).join(`,"'",`)})`;
     const xpath = el => {
-      if(el.id&&!el.id.includes("'")&&document.querySelectorAll('[id]').length&&[...document.querySelectorAll('[id]')].filter(n=>n.id===el.id).length===1)return `//*[@id='${el.id}']`;
-      const parts=[];for(let node=el;node&&node.nodeType===1;node=node.parentElement){let index=1;for(let sib=node.previousElementSibling;sib;sib=sib.previousElementSibling)if(sib.localName===node.localName)index++;parts.unshift(`${node.localName}[${index}]`);}return '/'+parts.join('/');
+      if(el.id&&[...el.ownerDocument.querySelectorAll('[id]')].filter(n=>n.id===el.id).length===1)return `//*[@id=${literal(el.id)}]`;
+      const parts=[];
+      for(let node=el;node;node=node.parentElement){
+        let index=1;
+        for(let sib=node.previousElementSibling;sib;sib=sib.previousElementSibling)if(sib.localName===node.localName&&sib.namespaceURI===node.namespaceURI)index++;
+        const name=node.namespaceURI==='http://www.w3.org/1999/xhtml' ? node.localName : `*[local-name()=${literal(node.localName)} and namespace-uri()=${literal(node.namespaceURI??'')}]`;
+        parts.unshift(`${name}[${index}]`);
+      }
+      return '/'+parts.join('/');
     };
-    const clone=document.documentElement.cloneNode(true);clone.querySelectorAll('[data-webclip-ui]').forEach(n=>n.remove());
+    const content = el => {
+      const walker=el.ownerDocument.createTreeWalker(el,NodeFilter.SHOW_TEXT);
+      let text='', node;
+      while((node=walker.nextNode()))if(!node.parentElement.closest('script,style,noscript'))text+=node.data;
+      const links=new Set(), images=new Set();
+      for(const node of [el,...el.querySelectorAll('a,area,img,source,image')]){
+        if(['a','area'].includes(node.localName)&&node.hasAttribute('href'))links.add(node.getAttribute('href'));
+        if(['img','source','image'].includes(node.localName))for(const attr of ['src','srcset','href','xlink:href','data-src','data-srcset'])if(node.hasAttribute(attr))images.add(`${attr}:${node.getAttribute(attr)}`);
+      }
+      // Parsing may duplicate an anchor while retaining the same link destination.
+      return JSON.stringify({text:text.replace(/\s+/g,' ').trim(),links:[...links].sort(),images:[...images].sort()});
+    };
+    const clone=document.documentElement.cloneNode(true);
+    let marker='data-webclip-region-map';
+    while(clone.hasAttribute(marker)||clone.querySelector(`[${marker}]`))marker+='-x';
+    const selected=state.regions.map((item,i)=>{
+      if(!item.el.isConnected||!supported(item.el))throw Error(`${item.id}：选区已失效，请重新选择`);
+      const path=xpath(item.el), fail=message=>{throw Error(`${item.id} (${path})：${message}`);};
+      // Child indices map to the untouched clone, before UI removal or parser repair.
+      const indices=[];
+      for(let node=item.el;node!==document.documentElement;node=node.parentNode)indices.unshift([...node.parentNode.childNodes].indexOf(node));
+      let target=clone;
+      for(const index of indices)target=target.childNodes[index];
+      target.setAttribute(marker,String(i));
+      return {item,path,fail,content:content(item.el)};
+    });
+    clone.querySelectorAll('[data-webclip-ui]').forEach(n=>n.remove());
     const charset=clone.querySelector('meta[charset]');if(charset)charset.setAttribute('charset','utf-8');else {const meta=document.createElement('meta');meta.setAttribute('charset','utf-8');clone.querySelector('head')?.prepend(meta);}
-    const source='<!doctype html>\n'+clone.outerHTML;
-    const parsed=new DOMParser().parseFromString(source,'text/html');
-    const regions=state.regions.map(item=>{
-      if(!item.el.isConnected||!supported(item.el))throw Error('选区已失效，请重新选择');
-      const path=xpath(item.el), match=parsed.evaluate(path,parsed,null,XPathResult.ORDERED_NODE_SNAPSHOT_TYPE,null);
-      if(match.snapshotLength!==1||match.snapshotItem(0).outerHTML!==item.el.outerHTML)throw Error('XPath 与捕获 HTML 不一致，请重新选择');
+    const serialize=el=>'<!doctype html>\n'+el.outerHTML;
+    const parsed=new DOMParser().parseFromString(serialize(clone),'text/html');
+    const mapped=selected.map((selection,i)=>{
+      const matches=parsed.querySelectorAll(`[${marker}="${i}"]`);
+      if(matches.length===0)selection.fail('捕获 HTML 中找不到选区，请选择完整父区块');
+      if(matches.length!==1)selection.fail('选区被 HTML 解析器拆分，请选择完整父区块');
+      const target=matches[0];
+      if(content(target)!==selection.content)selection.fail('捕获后选区内容移到区域外或丢失，请选择完整父区块');
+      return {...selection,target};
+    });
+    parsed.querySelectorAll(`[${marker}]`).forEach(node=>node.removeAttribute(marker));
+    const source=serialize(parsed.documentElement), final=new DOMParser().parseFromString(source,'text/html');
+    const regions=mapped.map(({item,path,target,fail})=>{
+      const capturedPath=xpath(target), match=final.evaluate(capturedPath,final,null,XPathResult.ORDERED_NODE_SNAPSHOT_TYPE,null);
+      if(match.snapshotLength!==1||!target.isEqualNode(match.snapshotItem(0)))fail('最终捕获 XPath 不稳定，请选择完整父区块');
       const r=item.el.getBoundingClientRect();
-      if(r.width<=0||r.height<=0)throw Error('选区不可见');
-      return {id:item.id,xpath:path,rect:{x:Math.max(0,r.x+scrollX),y:Math.max(0,r.y+scrollY),width:r.width,height:r.height},text:(item.el.innerText||'').trim().slice(0,4000),textOnly:textOnly(item.el),fingerprint:item.el.outerHTML};
+      if(r.width<=0||r.height<=0)fail('选区不可见，请重新选择');
+      return {id:item.id,xpath:capturedPath,...(path!==capturedPath?{sourceXPath:path}:{}),rect:{x:Math.max(0,r.x+scrollX),y:Math.max(0,r.y+scrollY),width:r.width,height:r.height},text:(item.el.innerText||'').trim().slice(0,4000),textOnly:textOnly(item.el),fingerprint:item.el.outerHTML};
     });
     return {source,regions,pageUrl:location.href,baseUrl:document.baseURI,viewport:{width:innerWidth,height:innerHeight},documentSize:{width:Math.max(document.documentElement.scrollWidth,innerWidth),height:Math.max(document.documentElement.scrollHeight,innerHeight)}};
   };

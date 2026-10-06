@@ -18,5 +18,7 @@ it("keeps the brief stable and removable without consuming user text", () => {
   expect(text).toContain('window.renderWidget(data)');
   expect(text).toContain("fetch('./data.json'");
   expect(text).toContain('window.widgetReady');
+  expect(text).toContain('region.xpath');
+  expect(text).toContain('optional region.sourceXPath locates the region in the live source DOM');
   expect(text).not.toContain('embedded snapshot');
 });

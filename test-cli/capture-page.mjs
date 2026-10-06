@@ -44,9 +44,9 @@ async function captureOnce(page, compositor) {
     const image = await composeCaptureImage(compositor, tiles, mode, size);
     const imageId = mode==='page'?'page-image':'regions-image';
     const filename = image ? (mode==='page'?'page':'regions')+(image.mimeType==='image/png'?'.png':'.jpg') : null;
-    const regions = snapshot.regions.map(({id,xpath,rect,text}) => {
+    const regions = snapshot.regions.map(({id,xpath,sourceXPath,rect,text}) => {
       const index=tiles.findIndex(tile=>tile.id===id);
-      return {id,xpath,rect,text,...(index>=0?{imageId,imageRect:image.boxes[index]}:{})};
+      return {id,xpath,...(sourceXPath?{sourceXPath}:{}),rect,text,...(index>=0?{imageId,imageRect:image.boxes[index]}:{})};
     });
     return {snapshot,image,filename,capture:{version:1,mode,source:'source.html',viewport:snapshot.viewport,regions,
       images:image?[{id:imageId,file:filename,width:image.width,height:image.height,originalWidth:image.originalWidth,originalHeight:image.originalHeight,mimeType:image.mimeType,bytes:image.bytes,role:mode==='page'?'full-page':'montage'}]:[]}};
@@ -100,7 +100,8 @@ export async function capturePage(options, { headless = false, signal, onPage, r
         catch(error) { if(!String(error).includes('捕获期间'))throw error; result=await captureOnce(page,compositor); }
       } catch(error) {
         if(!options.select)throw error;
-        report(String(error));await page.evaluate(message=>window.__webclipCapture.error(message),String(error));continue;
+        const message=(error instanceof Error?error.message:String(error)).split('\n')[0];
+        report(message);await page.evaluate(message=>window.__webclipCapture.error(message),message);continue;
       }
       if(!options.select)break;
       await page.evaluate(url=>window.__webclipCapture.showPreview(url),result.image?.url??'');

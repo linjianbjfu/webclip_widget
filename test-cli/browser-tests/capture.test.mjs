@@ -10,12 +10,36 @@ import {composeCaptureImage} from '../capture-images.mjs';
 const html=`<!doctype html><html><head><style>body{margin:0;font:20px sans-serif}section{width:600px;height:180px;margin:20px;background:#eef}#tiny{margin:20px;font:16px sans-serif;height:24px}canvas{width:300px;height:100px}</style></head><body>
 <section id="quote"><h2>微软股价</h2><p>价格 <span id="price">0</span></p></section><section id="chart"><h2>趋势区域</h2><canvas id="canvas" width="300" height="100"></canvas></section><p id="tiny">单行文本 0</p><iframe id="frame" srcdoc="<p>frame</p>"></iframe><div id="shadow"></div>
 <script>document.querySelector('#price').textContent='420';document.querySelector('#canvas').getContext('2d').fillRect(10,10,60,60);document.querySelector('#shadow').attachShadow({mode:'open'}).innerHTML='<p>shadow content</p>';</script></body></html>`;
-async function serverFixture(t){
- const server=createServer((req,res)=>{if(req.url==='/redirect'){res.writeHead(302,{location:'/page'}).end();return;}res.writeHead(200,{'content-type':'text/html; charset=utf-8'}).end(html);});
+async function serverFixture(t,source=html){
+ const server=createServer((req,res)=>{if(req.url==='/redirect'){res.writeHead(302,{location:'/page'}).end();return;}res.writeHead(200,{'content-type':'text/html; charset=utf-8'}).end(source);});
  server.listen(0,'127.0.0.1');await once(server,'listening');t.after(()=>new Promise(resolve=>{server.closeAllConnections();server.close(resolve);}));return `http://127.0.0.1:${server.address().port}`;
 }
 async function button(page,id){await page.evaluate(id=>document.querySelector('[data-webclip-ui]').shadowRoot.querySelector('#'+id).click(),id);}
 async function drag(page,id){const rect=await page.$eval(id,el=>{const r=el.getBoundingClientRect();return{x:r.x,y:r.y,width:r.width,height:r.height};});await page.mouse.move(rect.x+3,rect.y+3);await page.mouse.down();await page.mouse.move(rect.x+rect.width-3,rect.y+rect.height-3,{steps:5});await page.mouse.up();}
+
+test('repaired news card reaches preview and keeps live XPath in outgoing metadata',async t=>{
+ const url=await serverFixture(t,`<!doctype html><html><head><style>article{margin:20px;width:600px;height:180px;background:#eef}</style></head><body><article id="card"></article><script>
+ const outer=document.createElement('a');outer.href='/news';outer.innerHTML='<h2>新闻标题</h2><div class="author"></div>';
+ const author=document.createElement('a');author.href='/author';author.textContent='作者';outer.querySelector('div').append(author);document.querySelector('#card').append(outer);
+ </script></body></html>`);
+ let interaction;const reports=[];
+ const result=await capturePage({url,select:true},{headless:true,report:message=>reports.push(message),onPage:page=>{
+  interaction=(async()=>{
+   await page.evaluate(()=>{window.__webclipCapture.state.regions=[{id:'r1',el:document.querySelector('#card > a')}];});
+   await button(page,'finish');
+   await page.waitForFunction(()=>window.__webclipCapture.state.status==='selecting'&&document.querySelector('[data-webclip-ui]').shadowRoot.querySelector('#error').textContent,{polling:100});
+   const error=await page.evaluate(()=>document.querySelector('[data-webclip-ui]').shadowRoot.querySelector('#error').textContent);
+   assert.match(error,/r1.*拆分.*父区块/);assert.doesNotMatch(error,/pptr:|\n/);
+   await button(page,'clear');await drag(page,'#card');await drag(page,'a[href="/author"]');await button(page,'finish');
+   await page.waitForFunction(()=>window.__webclipCapture.state.status==='preview',{polling:100});await button(page,'send');
+  })();interaction.catch(()=>{void button(page,'cancel').catch(()=>{});});
+ }});
+ await interaction;assert.ok(result);t.after(()=>result.dispose());
+ assert.equal(result.capture.regions.length,2);assert.equal(result.capture.images.length,1);
+ assert.ok(result.capture.regions[1].sourceXPath);assert.notEqual(result.capture.regions[1].sourceXPath,result.capture.regions[1].xpath);
+ const source=await readFile(result.files[0],'utf8');assert.match(source,/新闻标题/);assert.match(source,/href="\/author"/);assert.doesNotMatch(source,/data-webclip-region-map/);
+ assert.ok(reports.some(message=>message.includes('拆分')));assert.ok(reports.every(message=>!message.includes('pptr:')));
+});
 
 test('real region UI captures current DOM, montage and optional text without crossing frames/shadow',async t=>{
  const url=await serverFixture(t);let completed;
