@@ -58,7 +58,7 @@ test('real region UI captures current DOM, montage and optional text without cro
  assert.equal(result.capture.regions.length,3);assert.equal(result.capture.regions[2].imageId,undefined);
  assert.equal(result.capture.regions[0].imageId,result.capture.regions[1].imageId);
  assert.ok(result.capture.images[0].width<=1200&&result.capture.images[0].height<=1200);
- const source=await readFile(result.files[0],'utf8');assert.match(source,/420/);assert.doesNotMatch(source,/data-webclip-ui/);assert.match(source,/<div id="shadow"><\/div>/);
+ const source=await readFile(result.files[0],'utf8');assert.match(source,/420/);assert.doesNotMatch(source,/data-webclip-ui|id="shadow"|id="frame"/);
  const png=await readFile(result.files[1]);assert.equal(png.readUInt32BE(16),result.capture.images[0].width);
  await result.dispose();await assert.rejects(stat(result.files[0]));
 });

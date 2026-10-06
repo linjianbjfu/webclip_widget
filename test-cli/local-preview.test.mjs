@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { loadAndExtract, parsePreviewArgs, previewInputs, SOURCE_WAIT_MS, writePreviewData } from './local-preview.mjs';
 
 async function fixture(t) {
@@ -21,10 +21,10 @@ async function fixture(t) {
   return { root, source, out };
 }
 
-test('preview arguments require out and default source to its capture directory', () => {
+test('preview arguments require out and leave the source implicit for URL preview', () => {
   assert.deepEqual(parsePreviewArgs(['--out', 'out', '--source', 'source.html']), { out: resolve('out'), source: resolve('source.html') });
   assert.deepEqual(parsePreviewArgs(['--help']), { help: true });
-  assert.deepEqual(parsePreviewArgs(['--out', 'out']), { out: resolve('out'), source: resolve('out', 'capture', 'source.html') });
+  assert.deepEqual(parsePreviewArgs(['--out', 'out']), { out: resolve('out') });
   for (const args of [[], ['--source'], ['--out','--source','x'], ['--source','x'],
     ['--source','x','--source','y','--out','z'], ['--source','x','--out','z','--wait-for-selector','p'],
     ['--source','x','--out','z','extra'], ['--help','--out','z']]) assert.throws(() => parsePreviewArgs(args));
@@ -48,20 +48,25 @@ test('input checks require the three artifacts, allow existing data and reject i
   assert.equal(await readFile(join(input.out, 'data.json'), 'utf8'), '{"old":true}');
 });
 
-test('default capture source is required when omitted, while explicit source takes precedence', async t => {
-  const input = await fixture(t);
-  const options = parsePreviewArgs(['--out', input.out]);
-  await assert.rejects(previewInputs(options), error => error.code === 'ENOENT' && error.path === join(input.out,'capture','source.html'));
-  await mkdir(join(input.out, 'capture'));
-  await writeFile(join(input.out, 'capture', 'source.html'), '<p>captured</p>');
-  assert.equal((await previewInputs(options)).source, await realpath(join(input.out,'capture','source.html')));
-  const explicit = parsePreviewArgs(['--out', input.out, '--source', input.source]);
-  assert.equal((await previewInputs(explicit)).source, await realpath(input.source));
-  await rm(input.source);
-  await assert.rejects(previewInputs(explicit), error => error.code === 'ENOENT' && error.path === input.source);
+test('default preview reads only pageUrl and viewport, while explicit source bypasses metadata', async t => {
+  const input=await fixture(t), options=parsePreviewArgs(['--out',input.out]);
+  await assert.rejects(previewInputs(options), /Cannot read capture metadata/);
+  await mkdir(join(input.out,'capture'));
+  const metadata=join(input.out,'capture','capture.json');
+  const capture={pageUrl:'https://example.com/final?q=1#news',requestUrl:'https://example.com/start',baseUrl:'https://cdn.example.com/',viewport:{width:1280,height:900}};
+  await writeFile(metadata,JSON.stringify(capture));
+  const resolved=await previewInputs(options);
+  assert.equal(resolved.url,capture.pageUrl);assert.deepEqual(resolved.viewport,{width:1280,height:900,deviceScaleFactor:1});
+  for(const invalid of [null,{}, {...capture,pageUrl:'file:///tmp/source.html'}, {...capture,pageUrl:'javascript:alert(1)'}, {...capture,pageUrl:42}, {...capture,viewport:{width:0,height:900}}, {...capture,viewport:{width:1280.5,height:900}}]){
+    await writeFile(metadata,JSON.stringify(invalid));await assert.rejects(previewInputs(options), /pageUrl|viewport/);
+  }
+  await writeFile(metadata,'invalid JSON');await assert.rejects(previewInputs(options), /Cannot read capture metadata/);
+  const explicit=parsePreviewArgs(['--out',input.out,'--source',input.source]);
+  assert.equal((await previewInputs(explicit)).url,pathToFileURL(await realpath(input.source)).href);
+  await rm(input.source);await assert.rejects(previewInputs(explicit),{code:'ENOENT'});
 });
 
-test('load completes before the fixed three-second wait and extraction follows the wait', async () => {
+test('load completes before the fixed five-second wait and extraction follows the wait', async () => {
   const order = [];
   let finishLoad, finishWait;
   const loading = new Promise(resolve => { finishLoad = resolve; });
@@ -69,11 +74,12 @@ test('load completes before the fixed three-second wait and extraction follows t
   let sawWait;
   const waitStarted = new Promise(resolve => { sawWait = resolve; });
   const page = {
-    goto: async (_url, options) => { assert.equal(options.waitUntil, 'load'); await loading; order.push('load'); },
+    setViewport: async viewport => { assert.deepEqual(viewport,{width:1280,height:900,deviceScaleFactor:1}); },
+    goto: async (url, options) => { assert.equal(url,'https://example.com/source'); assert.equal(options.waitUntil, 'load'); await loading; order.push('load'); },
     evaluate: async script => { assert.match(script, /eval\(scriptSource\)/); order.push('extract'); return '{"value":0}'; },
   };
-  const result = loadAndExtract(page, { source: resolve('source.html'), extra: '(() => ({value:0}))()' }, {
-    report: () => {}, wait: async ms => { assert.equal(ms, 3000); assert.equal(ms, SOURCE_WAIT_MS); order.push('wait'); sawWait(); await waiting; },
+  const result = loadAndExtract(page, { url: 'https://example.com/source', viewport:{width:1280,height:900,deviceScaleFactor:1}, extra: '(() => ({value:0}))()' }, {
+    report: () => {}, wait: async ms => { assert.equal(ms, 5000); assert.equal(ms, SOURCE_WAIT_MS); order.push('wait'); sawWait(); await waiting; },
   });
   assert.deepEqual(order, []);
   finishLoad();
@@ -88,7 +94,7 @@ test('cancellation during the delay never evaluates the extractor', async () => 
   const stop = new AbortController();
   let evaluated = false;
   await assert.rejects(loadAndExtract({ goto: async () => {}, evaluate: async () => { evaluated = true; } },
-    {source: resolve('source.html'), extra: 'invalid'}, {
+    {url: 'https://example.com/source', extra: 'invalid'}, {
       signal: stop.signal, report: () => {}, wait: async () => { stop.abort(); },
     }));
   assert.equal(evaluated, false);

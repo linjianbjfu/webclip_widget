@@ -12,7 +12,7 @@ debug 需要与实际请求对应的 source.html、最终拼图及 XPath。临�
 
 先完整暂存，已有 capture 目录移入暂存位置，再发布新目录；普通发布失败恢复此前副本，恢复本身失败则保留暂存内容。并发保存通过会话内独立 capture 锁隔离。保存失败不发送 prompt，后续 HTTP/模型失败仍保留副本；新会话创建失败时没有 sessionId，不生成该目录。
 
-仅文本区域只保留 source.html 和 capture.json；整页模式保留整页图。metadata 与请求中的 capture 一致，用户可核对区域编号、XPath、图块坐标和来源 URL。用法由[CLI 文档](../../../../docs/test-cli.md#框选页面内容并生成-widget)拥有。
+仅文本区域只保留 source.html 和 capture.json；整页模式保留整页图。source.html 保留实际提交的精简或整页版本。metadata 中的 pageUrl 是默认在线 preview 的来源，不另写重复 URL 文件；同次目录替换更新地址，旧记录可直接使用。精简和预览入口见[DOM 精简与原 URL 预览](2026-10-06-pruned-capture-live-url-preview.md)。metadata 与请求中的 capture 一致，用户可核对区域编号、XPath、图块坐标和来源 URL。用法由[CLI 文档](../../../../docs/test-cli.md#框选页面内容并生成-widget)拥有。
 
 ## 曾考虑的替代方案
 

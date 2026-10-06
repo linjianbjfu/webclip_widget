@@ -8,9 +8,9 @@ Status: implemented
 
 ## 决策
 
-`preview --out <目录> [--source <HTML>]` 是独立 CLI 命令，在服务端配置和 Client 初始化前分流，不依赖 WEBCLIP 环境变量。未传 --source 时使用 out/capture/source.html，显式传入则使用指定文件；缺失时直接报错，不搜索其他路径。out 必须已有 extra.js、widget.html、meta.json，允许包含 data.json 和其他文件；输入路径相对于工作目录，输出不追加会话或轮次目录。用法与浏览器配置由[CLI 文档](../../../../docs/test-cli.md#本地预览-widget)拥有。
+`preview --out <目录> [--source <HTML>]` 是独立 CLI 命令，在服务端配置和 Client 初始化前分流，不依赖 WEBCLIP 环境变量。默认使用 capture.json 的 pageUrl 和 viewport 打开在线页面，显式 --source 则使用指定的本地文件；缺失时直接报错，不自动回退。默认来源和等待约定由[DOM 精简与原 URL 预览](2026-10-06-pruned-capture-live-url-preview.md)拥有。out 必须已有 extra.js、widget.html、meta.json，允许包含 data.json 和其他文件；输入路径相对于工作目录，输出不追加会话或轮次目录。用法与浏览器配置由[CLI 文档](../../../../docs/test-cli.md#本地预览-widget)拥有。
 
-源 HTML 在独立、可见 Chrome/Chromium 中通过 file URL 加载，正常执行网页脚本。用户选择在 load 之后固定等待 3 秒，再直接求值 extra.js；没有选择器或等待时长参数。等待可中止。提取结果与 backend 使用同一 extractionExpression 校验，在浏览器中拒绝 Promise 和非 JSON 对象，避免自动等待 Promise 隐藏不合规返回值。backend 使用惰性捕获 DOM，CLI 使用实际加载后的 document，各自保留页面加载方式。
+源页面在独立、可见 Chrome/Chromium 中加载，正常执行网页脚本；在线入口使用捕获视口及 DPR 1，显式本地文件通过 file URL 加载。load 之后固定等待 5 秒，再直接求值 extra.js；没有选择器或等待时长参数。等待可中止。提取结果与 backend 使用同一 extractionExpression 校验，在浏览器中拒绝 Promise 和非 JSON 对象，避免自动等待 Promise 隐藏不合规返回值。backend 使用惰性捕获 DOM，CLI 使用实际加载后的 document，各自保留页面加载方式。
 
 结果在 out 内暂存后重命名为 data.json，覆盖旧数据，其他产物保持不变。提取、校验或写入失败不覆盖原数据，也不启动结果服务。提取成功后关闭源页面，并启动仅监听 127.0.0.1、自动分配端口的静态 HTTP server，服务范围限定在 out。根请求打开 widget.html，禁止目录索引、路径穿越及符号链接越界，响应禁用缓存。
 
@@ -30,7 +30,7 @@ Chrome 辅助进程可能在主进程退出后继续持有继承的 stderr。启
 
 **无头提取后打开默认浏览器。** 无法统一 viewport、widgetReady 检查和关闭生命周期，采用 CLI 自己管理的可见浏览器，不借用日常 profile。
 
-**按选择器等待，或禁用源网页脚本。** 用户选择正常执行源脚本，并在 load 后固定等待几秒，因此固定为 3 秒，不增加等待参数。
+**按选择器等待，或禁用源网页脚本。** 用户选择正常执行源脚本，并在 load 后固定等待几秒，采用固定等待，不增加等待参数。
 
 ## 验证
 
@@ -42,7 +42,7 @@ Chrome 辅助进程可能在主进程退出后继续持有继承的 stderr。启
 
 ## 后果
 
-本地复现从原网页到 widget 的完整数据路径只需一条命令，代价是需要已安装的 Chrome/Chromium 与图形桌面。file URL 不恢复原网站 origin、登录态或缺失资源；固定 3 秒也不保证任意异步数据全部到达。它是 Chromium 调试流程，不能替代 iOS WKWebView 真机验证。
+本地复现从原网页到 widget 的完整数据路径只需一条命令，代价是需要已安装的 Chrome/Chromium 与图形桌面。file URL 不恢复原网站 origin、登录态或缺失资源；固定 5 秒也不保证任意异步数据全部到达。它是 Chromium 调试流程，不能替代 iOS WKWebView 真机验证。
 
 每次运行只提取一次；重新提取通过再次执行命令触发。没有文件监听、轮询、模型重生成、截图导出或局域网公开服务。
 

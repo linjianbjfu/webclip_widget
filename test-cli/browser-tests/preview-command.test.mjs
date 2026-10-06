@@ -1,5 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import {createServer} from 'node:http';
+import {once} from 'node:events';
 import { spawn } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -16,8 +18,10 @@ test('actual CLI opens HTTP output without credentials and SIGINT/SIGTERM dispos
   const out=join(root,'out'); await mkdir(out);
   const profiles=join(root,'profiles'); await mkdir(profiles);
   await mkdir(join(out,'capture'));
-  const source=join(out,'capture','source.html');
-  await writeFile(source,'<p id="value">0</p><script>document.querySelector("#value").textContent="19"</script>');
+  const sourceServer=createServer((_req,res)=>res.writeHead(200,{'content-type':'text/html'}).end('<p id="value">0</p><script>document.querySelector("#value").textContent="19"</script>'));
+  sourceServer.listen(0,'127.0.0.1');await once(sourceServer,'listening');
+  t.after(()=>new Promise(resolve=>{sourceServer.closeAllConnections();sourceServer.close(resolve);}));
+  await writeFile(join(out,'capture','capture.json'),JSON.stringify({pageUrl:`http://127.0.0.1:${sourceServer.address().port}/source`,viewport:{width:1280,height:900}}));
   await writeFile(join(out,'extra.js'),'(() => ({value:Number(document.querySelector("#value").textContent)}))()');
   await writeFile(join(out,'meta.json'),'{"size":"small"}');
   await writeFile(join(out,'widget.html'),'<main id="widget-root"></main><script>window.widgetReady=fetch("./data.json").then(r=>r.json()).then(d=>document.querySelector("#widget-root").textContent=d.value);</script>');
@@ -40,7 +44,7 @@ child.on('close',code=>{process.exitCode=code??0;});\n`,{mode:0o755});
     child.stdout.on('data',bytes=>{
       stdout+=bytes;
       if(stage==='ready'&&stdout.includes('Preview ready:'))reached();
-      if(stage==='waiting'&&stdout.includes('waiting 3 seconds'))reached();
+      if(stage==='waiting'&&stdout.includes('waiting 5 seconds'))reached();
     });
     child.stderr.on('data',bytes=>{stderr+=bytes;});
     await bounded(Promise.race([checkpoint,closed.then(()=>{throw Error(`CLI exited early: ${stderr}`);})]),{timeout:60_000,label:'CLI ready'});

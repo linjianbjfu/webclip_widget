@@ -78,7 +78,6 @@ export function installSelectionUI() {
   api.snapshot = () => {
     const literal = value => !value.includes("'") ? `'${value}'` : !value.includes('"') ? `"${value}"` : `concat(${value.split("'").map(part=>`'${part}'`).join(`,"'",`)})`;
     const xpath = el => {
-      if(el.id&&[...el.ownerDocument.querySelectorAll('[id]')].filter(n=>n.id===el.id).length===1)return `//*[@id=${literal(el.id)}]`;
       const parts=[];
       for(let node=el;node;node=node.parentElement){
         let index=1;
@@ -124,12 +123,40 @@ export function installSelectionUI() {
       if(matches.length!==1)selection.fail('选区被 HTML 解析器拆分，请选择完整父区块');
       const target=matches[0];
       if(content(target)!==selection.content)selection.fail('捕获后选区内容移到区域外或丢失，请选择完整父区块');
-      return {...selection,target};
+      return {...selection,target,capturedPath:xpath(target)};
     });
+    if(mapped.length){
+      const roots=new Set(mapped.map(region=>region.target)), branches=new Set();
+      for(const root of roots)for(let node=root;node;node=node.parentElement)branches.add(node);
+      const clearText = root => {
+        const pending=[root];
+        while(pending.length){
+          const node=pending.pop();
+          for(const child of [...node.childNodes]){
+            if(child.nodeType===Node.TEXT_NODE||child.nodeType===Node.COMMENT_NODE)child.remove();
+            else pending.push(child);
+          }
+          if(node.localName==='template'&&node.content)pending.push(node.content);
+        }
+      };
+      const prune = node => {
+        if(roots.has(node))return;
+        const children=[...node.childNodes];
+        const last=children.findLastIndex(child=>branches.has(child));
+        for(const [index,child] of children.entries()){
+          if(index>last||child.nodeType!==Node.ELEMENT_NODE)child.remove();
+          else if(branches.has(child))prune(child);
+          else clearText(child);
+        }
+      };
+      // Keeping every preceding element preserves forward XPath indices at each level.
+      prune(parsed.documentElement);
+    }
     parsed.querySelectorAll(`[${marker}]`).forEach(node=>node.removeAttribute(marker));
     const source=serialize(parsed.documentElement), final=new DOMParser().parseFromString(source,'text/html');
-    const regions=mapped.map(({item,path,target,fail})=>{
-      const capturedPath=xpath(target), match=final.evaluate(capturedPath,final,null,XPathResult.ORDERED_NODE_SNAPSHOT_TYPE,null);
+    if(mapped.length&&!parsed.documentElement.isEqualNode(final.documentElement))mapped[0].fail('精简 HTML 重新解析后结构不稳定，请选择完整父区块');
+    const regions=mapped.map(({item,path,target,capturedPath,fail})=>{
+      const match=final.evaluate(capturedPath,final,null,XPathResult.ORDERED_NODE_SNAPSHOT_TYPE,null);
       if(match.snapshotLength!==1||!target.isEqualNode(match.snapshotItem(0)))fail('最终捕获 XPath 不稳定，请选择完整父区块');
       const r=item.el.getBoundingClientRect();
       if(r.width<=0||r.height<=0)fail('选区不可见，请重新选择');

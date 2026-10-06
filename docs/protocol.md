@@ -122,7 +122,7 @@ multipart 的可选文本字段 `capture` 是 JSON，version 为 1。主来源�
   "baseUrl": "https://example.com/quote",
   "viewport": { "width": 1280, "height": 900 },
   "regions": [
-    { "id": "r1", "xpath": "//*[@id='quote']", "rect": { "x": 20, "y": 80, "width": 600, "height": 300 }, "text": "当前股价", "imageId": "regions-image", "imageRect": { "x": 8, "y": 32, "width": 600, "height": 300 } }
+    { "id": "r1", "xpath": "/html[1]/body[1]/div[3]", "rect": { "x": 20, "y": 80, "width": 600, "height": 300 }, "text": "当前股价", "imageId": "regions-image", "imageRect": { "x": 8, "y": 32, "width": 600, "height": 300 } }
   ],
   "images": [
     { "id": "regions-image", "file": "regions.png", "width": 616, "height": 340, "originalWidth": 1280, "originalHeight": 900, "mimeType": "image/png", "bytes": 12000, "role": "montage" }
@@ -132,7 +132,9 @@ multipart 的可选文本字段 `capture` 是 JSON，version 为 1。主来源�
 
 示例中的 bytes 必须替换为实际图片字节数。区域 rect 是主文档 CSS px；imageRect 是拼图中对应内容块的像素范围，不含编号栏。`imageId` 与 `imageRect` 必须同时出现或同时省略。仅文本区域保留非空 text 与 XPath；regions 模式最多 8 个区域，可没有图片，或者共享唯一一张 montage 图片。imageRect 必须在图片内且各区域内容块不重叠。page 模式 regions 为空，必须有一张 full-page 图片。
 
-区域 `xpath` 定位上传的 source.html。CLI 对捕获 HTML 做解析器规范化；若实时网页路径与捕获路径不同，可选 `sourceXPath` 记录实时路径，路径相同时省略。两者均为非空字符串，各最多 4096 字符。模型用 xpath 检查捕获数据，并参考 sourceXPath 理解原网页位置；未来提取仍需选择稳定锚点。旧请求无需新增字段。
+区域 `xpath` 定位上传的 source.html。CLI 对捕获 HTML 做解析器规范化；若实时网页路径与捕获路径不同，可选 `sourceXPath` 记录实时路径，路径相同时省略。两者均为非空字符串，各最多 4096 字符。新 CLI 使用正向绝对元素路径，不用 id 快捷路径；裁剪前后的 xpath 必须保持有效。模型用 xpath 检查捕获数据，用 sourceXPath（如有）定位实时 DOM，并校验选区字段。旧请求仍接受原有 XPath 字符串，无需新增字段。
+
+regions 模式的 source.html 可清空非选区文本/脚本/CSS 正文并删除后方无关分支，同时保留选区内容、祖先及前方元素结构和属性。精简不能改变原正向路径，但会改变全局匹配数量或倒序位置；模型不能据此推断 id 全局唯一性、last() 或 last-child。page 模式保留整页内容。
 
 图片格式限定 PNG/JPEG，二进制内容作为同名 file 部分上传。server 解码验证实际格式与尺寸，不能仅修改 MIME/扩展名绕过校验。拼图宽高最多 1200px，整页图最多 768px，每轮图片最多 2 MiB；capture JSON 最多 64 KiB，每个区域 text 最多 4000 字符。非法结构、重复文件或引用缺失返回 400，尺寸/字节超限返回 413。
 

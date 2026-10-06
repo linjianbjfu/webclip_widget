@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import {createServer} from 'node:http';
+import {once} from 'node:events';
 import { runLocalPreview } from '../local-preview.mjs';
 import { bounded, launchBrowser } from '../browser.mjs';
 
@@ -33,6 +35,46 @@ function preview(t, input) {
   t.after(async()=>{stop.abort();await done.catch(()=>{});});
   return {stop,done,ready:bounded(Promise.race([received,done.then(()=>{throw Error('Preview ended before ready');})]),{timeout:60_000,label:'Preview test'})};
 }
+
+async function sourceServer(t){
+  const requests=[];
+  const server=createServer((req,res)=>{
+    requests.push(req.url);
+    if(req.url==='/missing'){res.writeHead(404).end('not found');return;}
+    if(req.url==='/disconnect'){req.socket.destroy();return;}
+    res.writeHead(200,{'content-type':'text/html; charset=utf-8'}).end('<p id="value">0</p><script>addEventListener("load",()=>{document.querySelector("#value").textContent="42";window.sourceLoaded=true;});</script>');
+  });
+  server.listen(0,'127.0.0.1');await once(server,'listening');
+  t.after(()=>new Promise(resolve=>{server.closeAllConnections();server.close(resolve);}));
+  return {url:`http://127.0.0.1:${server.address().port}`,requests};
+}
+
+test('URL preview uses the captured viewport and live data without a source.html file',async t=>{
+  const input=await fixture(t), source=await sourceServer(t);
+  await mkdir(join(input.out,'capture'));
+  await writeFile(join(input.out,'capture','capture.json'),JSON.stringify({pageUrl:source.url+'/final?q=1#news',requestUrl:source.url+'/wrong',baseUrl:source.url+'/assets/',viewport:{width:1111,height:777}}));
+  await rm(input.source);
+  await writeFile(join(input.out,'extra.js'),`(() => ({value:Number(document.querySelector('#value').textContent),label:'实时',width:innerWidth,height:innerHeight,dpr:devicePixelRatio,loaded:window.sourceLoaded,url:location.href}))()`);
+  const run=preview(t,{out:input.out}),info=await run.ready;
+  const data=await (await fetch(new URL('data.json',info.url))).json();
+  assert.deepEqual(data,{value:42,label:'实时',width:1111,height:777,dpr:1,loaded:true,url:source.url+'/final?q=1#news'});
+  assert.equal(await info.page.evaluate(()=>document.querySelector('#widget-root').textContent),'实时 42');
+  assert.ok(source.requests.includes('/final?q=1'));assert.ok(!source.requests.includes('/wrong'));
+  run.stop.abort();await run.done;
+});
+
+test('URL load and extraction failures preserve old data and never use the captured HTML fallback',async t=>{
+  const input=await fixture(t), source=await sourceServer(t);
+  await mkdir(join(input.out,'capture'));
+  await writeFile(join(input.out,'capture','source.html'),'<p id="value">old snapshot</p>');
+  await writeFile(join(input.out,'data.json'),'{"previous":true}');
+  for(const [path,extra,expected] of [['/missing','(() => ({value:1}))()',/HTTP 404/],['/disconnect','(() => ({value:1}))()',/ERR_/],['/final','(() => {throw Error("bad extraction")})()',/bad extraction/]]){
+    await writeFile(join(input.out,'capture','capture.json'),JSON.stringify({pageUrl:source.url+path,viewport:{width:1280,height:900}}));
+    await writeFile(join(input.out,'extra.js'),extra);
+    await assert.rejects(runLocalPreview({out:input.out},{headless:true,report:()=>{}}),expected);
+    assert.equal(await readFile(join(input.out,'data.json'),'utf8'),'{"previous":true}');
+  }
+});
 
 test('independent browsers execute page scripts, write data and serve all widget sizes', async t => {
   const a=await fixture(t,'small',7), b=await fixture(t,'large',12);

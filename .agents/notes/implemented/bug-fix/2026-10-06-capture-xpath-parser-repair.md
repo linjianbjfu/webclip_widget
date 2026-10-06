@@ -14,9 +14,9 @@ Status: implemented
 
 删除映射标记后输出规范化的 source.html，再解析一次，确认 XPath 唯一定位且规范化节点结构稳定。这里比较的是两次解析后的节点，不要求实时节点与捕获节点的 outerHTML 相等。HTML/SVG 路径处理命名空间、重复 id 和包含引号的 id。
 
-region.xpath 指向最终捕获 HTML；可选 sourceXPath 保存不同的实时路径。server 保留并验证该字段，prompt 区分两条路径的用途，生成 extra.js 时仍要求选择稳定锚点。旧 capture v1 无需新增字段；已有 debug 文件不回写。线上字段和限额由[协议](../../../../docs/protocol.md#capture区域与图片)拥有。
+region.xpath 指向最终捕获 HTML；可选 sourceXPath 保存不同的实时路径。server 保留并验证该字段，prompt 区分两条路径的用途，新 CLI 使用正向绝对元素路径，extra.js 以原定位和字段校验取数；精简后的全局唯一性不能作为稳定锚点的证据。旧 capture v1 无需新增字段；已有 debug 文件不回写。线上字段和限额由[协议](../../../../docs/protocol.md#capture区域与图片)拥有。
 
-截图前后的 source、实时选区 fingerprint 和区域位置检查继续发现真实变化。诊断在 UI/CLI 中仅显示消息首行，排除 Puppeteer 的 pptr:evaluate 调用位置。使用说明见[CLI 文档](../../../../docs/test-cli.md#框选页面内容并生成-widget)。
+截图前后的 source、实时选区 fingerprint 和区域位置检查继续发现真实变化；source 的保留范围及路径规则由[DOM 精简与原 URL 预览](../feature/2026-10-06-pruned-capture-live-url-preview.md)拥有。诊断在 UI/CLI 中仅显示消息首行，排除 Puppeteer 的 pptr:evaluate 调用位置。使用说明见[CLI 文档](../../../../docs/test-cli.md#框选页面内容并生成-widget)。
 
 本记录部分替代[多区域捕获](../feature/2026-10-05-region-capture-multimodal-widget.md)的定位判据；其输入、拼图和存储理由继续有效，两篇保持活跃。
 
@@ -34,7 +34,7 @@ region.xpath 指向最终捕获 HTML；可选 sourceXPath 保存不同的实时�
 
 完整卡片和列表可容忍内部 HTML 修复，而无法完整表达为 HTML 的选区仍需重新选择。捕获与实时层级可能不同，sourceXPath 防止模型混淆定位用途，但不保证未来页面结构不变。iframe 和 Shadow DOM 内部仍不支持。
 
-腾讯科技页实测中，新闻卡片、列表与 #channel-feed-area 均通过新的快照校验，包含 outerHTML 已改变的区域。实际截图流程仍被原有动态变化检查拒绝：捕获期间广告 script 被删除，加载更多状态从“加载更多”变为“加载中...”。这不是 XPath 映射失败；该真实网页的完整截图发送流程未验证通过。若需允许选区外的这些变化，应单独评估缩小稳定性检查范围，而不能用本修复静默放宽。
+腾讯科技页实测中，新闻卡片、列表与 #channel-feed-area 均通过新的快照校验，包含 outerHTML 已改变的区域。实际截图流程仍被原有动态变化检查拒绝：捕获期间广告 script 被删除，加载更多状态从“加载更多”变为“加载中...”。这不是 XPath 映射失败；该真实网页的完整截图发送流程未验证通过。[DOM 精简与原 URL 预览](../feature/2026-10-06-pruned-capture-live-url-preview.md)只忽略被清空的内容和被裁掉的后方分支；保留结构中的广告元素增删仍会触发检查。
 
 ## 验证
 

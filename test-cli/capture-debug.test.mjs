@@ -35,14 +35,16 @@ test('capture debug keeps exact source, image and metadata outside widget artifa
 
 test('a new text-only capture replaces the snapshot and removes stale images, preserving widget data', async t => {
   const f = await fixture(t);
+  f.captured.capture.pageUrl='https://example.com/first';
   const folder = await saveCaptureDebug({ sessionId:'session', captured:f.captured, root:f.root });
   await writeFile(join(f.root,'session','widget.html'),'keep widget');
   await writeFile(join(f.root,'session','data.json'),'keep data');
   await writeFile(f.source,'<p>new capture</p>');
-  const textCapture = {files:[f.source], capture:{...f.captured.capture, images:[], regions:f.captured.capture.regions.map(({imageId,imageRect,...region})=>region)}};
+  const textCapture = {files:[f.source], capture:{...f.captured.capture,pageUrl:'https://example.com/final?q=1#news', images:[], regions:f.captured.capture.regions.map(({imageId,imageRect,...region})=>region)}};
   assert.equal(await saveCaptureDebug({sessionId:'session',captured:textCapture,root:f.root}),folder);
   assert.deepEqual((await readdir(folder)).sort(),['capture.json','source.html']);
   assert.equal(await readFile(join(folder,'source.html'),'utf8'),'<p>new capture</p>');
+  assert.equal(JSON.parse(await readFile(join(folder,'capture.json'),'utf8')).pageUrl,textCapture.capture.pageUrl);
   assert.equal(await readFile(join(f.root,'session','widget.html'),'utf8'),'keep widget');
   assert.equal(await readFile(join(f.root,'session','data.json'),'utf8'),'keep data');
   assert.deepEqual((await readdir(join(f.root,'session'))).sort(),['capture','data.json','widget.html']);

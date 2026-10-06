@@ -69,23 +69,25 @@ npm run test-cli -- prompt "把这几个区域做成 widget" --file ./source.htm
 
 浏览器正常运行原网页脚本，load 后等 3 秒进入框选。拖框吸附完整 DOM 区块，可多选、删除、清空及切换浏览模式；父/子区块按钮用于调整范围。最多 8 个区域，同一元素不会重复添加。浏览模式可先登录或关闭弹窗；整页导航后旧选区清空。iframe 和 Shadow DOM 内部暂不支持，小图表不能靠截图像素生成可更新数据提取。
 
-每个区域保留 XPath 和 DOM 文本，短小纯文本可省略截图；有图区域缩放到不超过 768px 后拼成一张不超过 1200×1200px 的编号图。点击预览检查清晰度，可返回重选，再点击确认发送。capture、当前 DOM 规范化为 source.html、拼图和 prompt 同轮提交；本地原文件不覆盖。数据定位与格式见[Capture 协议](protocol.md#capture区域与图片)。
+每个区域保留从文档根开始的正向绝对 XPath 和 DOM 文本，短小纯文本可省略截图；有图区域缩放到不超过 768px 后拼成一张不超过 1200×1200px 的编号图。点击预览检查清晰度，可返回重选，再点击确认发送。capture、当前 DOM 规范化为 source.html、拼图和 prompt 同轮提交；本地原文件不覆盖。数据定位与格式见[Capture 协议](protocol.md#capture区域与图片)。
+
+有选区时，source.html 完整保留选区、祖先链及沿途前方兄弟元素的结构和属性，清空选区外的文本、注释及 script/style 正文；逐层删除最后一个包含选区的分支之后的无关兄弟节点。多选保留通往全部选区的路径，重叠部分不复制。选区内部的数据和 SVG 保留；无选区时不裁剪页面。正向 XPath 精简前后必须命中同一区域，不能根据删减后的文档推断全局 id 唯一性或倒序位置。
 
 HTML 解析器可能修复页面脚本生成的嵌套链接等结构。CLI 在克隆文档中追踪选区，确认区域唯一且文字、链接和图片引用保留，不要求实时 DOM 与捕获 HTML 逐字相同。`xpath` 定位捕获 HTML；位置有变时，`sourceXPath` 另行记录实时网页路径。真实网页不因规范化而修改。选区本身被拆分或内容移出范围时，错误会标明区域编号和路径；可点击该区域的“父区块”选择完整新闻卡片后重试。
 
 **不加 --select 的唯一 HTML/URL 输入也会启动浏览器，自动捕获并发送一张整页截图**；在选择界面直接确认且无选区也发送整页。整页图宽高不超过 768px，不拆图，不通过无限滚动扩展页面；长页文字可能过小，需要精细视觉信息时应框选区域。浏览器不可用会报错，不能静默作为无图请求发送。无页面来源的普通文本对话保持原流程。
 
-关闭选择浏览器或取消会结束捕获，不创建新会话、不发送模型请求。浏览器使用独立临时 profile，不共享日常登录态，捕获不单独导出 cookie、localStorage 或请求头。截图前后 DOM 或区域位置变化会自动重采一次，持续变化则提示重选；快速持续变化的页面可能无法稳定捕获。图片编码后超过 2 MiB 时提示调整区域。
+关闭选择浏览器或取消会结束捕获，不创建新会话、不发送模型请求。浏览器使用独立临时 profile，不共享日常登录态，捕获不单独导出 cookie、localStorage 或请求头。截图前后保留的 DOM、实时选区内容或区域位置变化会自动重采一次，持续变化则提示重选；已清空内容或已删除后方分支的变化若不影响选区，则不会阻止捕获；快速持续变化的页面可能无法稳定捕获。图片编码后超过 2 MiB 时提示调整区域。
 
 确认捕获、取得 sessionId 后，CLI 在发送生成请求前保存 `downloads/<sessionId>/capture/`，并打印 `Capture saved: <绝对路径>`。目录含：
 
-- `source.html`：与提交内容一致的捕获 DOM。
+- `source.html`：与提交内容一致的捕获 DOM；有选区时为精简版本。
 - `regions.png` 或 `regions.jpg`：最终编号拼图；整页模式为 `page.png` 或 `page.jpg`；纯文本选区没有图片。
-- `capture.json`：与请求一致的 XPath、区域文本、拼图坐标和页面 URL 元数据。
+- `capture.json`：与请求一致的 XPath、区域文本、拼图坐标和页面 URL 元数据；其中 pageUrl 是默认 preview 的来源地址。
 
 同一会话再次捕获会更新这一专用目录，并移除其中旧截图；该目录不要存放需要保留的手工文件。widget 的三个产物及运行时 data.json 不受影响。副本保存失败时不发送 prompt，后续 HTTP/模型失败时副本仍保留。新会话创建失败时还没有 sessionId，不会生成此目录。
 
-生成完成后，可以使用这份源页面调试提取：
+生成完成后，可以重新打开记录的在线 URL 调试提取：
 
 ```bash
 npm run test-cli -- preview --out ./downloads/SESSION_ID
@@ -105,7 +107,7 @@ CLI 校验文件集合、UTF-8 字节数、sha256 和 metadata，先将全部文
 
 ## 本地预览 widget
 
-已有网页 HTML 和生成的产物目录时，直接运行：
+已有捕获记录和生成的产物目录时，直接运行；离线调试可显式指定原始 HTML：
 
 ```bash
 npm run test-cli -- preview --out ./downloads/SESSION_ID
@@ -113,12 +115,14 @@ npm run test-cli -- preview --out ./downloads/SESSION_ID --source ./source.html
 npm run test-cli -- preview --help
 ```
 
-`--out` 必填，`--source` 可选，路径相对于命令的工作目录。未传 --source 时使用 `<out>/capture/source.html`；显式传入时优先使用指定文件。找不到选定的源文件会报错，不搜索其他目录。out 必须已有 `extra.js`、`widget.html`、`meta.json`；可以含有 data.json 或其他文件。该命令不调用 backend 或模型，也不需要 WEBCLIP 环境变量。
+`--out` 必填，路径相对于命令的工作目录。默认从 `<out>/capture/capture.json` 读取 `pageUrl` 和 viewport，打开该 HTTP/HTTPS 地址，使用捕获时的视口尺寸及 DPR 1。旧捕获只要有这些字段即可使用；无需 capture/source.html。缺少或非法 URL、viewport 或损坏的 metadata 会报错。默认不会退回 source.html，也不用 requestUrl 或 baseUrl 代替 pageUrl。
 
-CLI 启动独立的可见 Chrome/Chromium，以 file URL 打开 source.html，正常执行原页面脚本；等待页面 load 后固定再等 **3 秒**，执行 extra.js 的完整内容。同步 JSON 对象通过校验后写入 out/data.json，已有数据文件被覆盖，其他文件保留。提取、校验或写入失败不会替换原数据。固定 3 秒不保证所有网站的异步数据都已到达，提取使用当时的 DOM；没有选择器或等待时长参数。
+`--source <原始 HTML>` 是显式离线入口：以 file URL 打开指定文件，优先于保存的 URL，不要求 capture.json。out 必须已有 `extra.js`、`widget.html`、`meta.json`；可以含有 data.json 或其他文件。该命令不调用 backend 或模型，也不需要 WEBCLIP 环境变量。
+
+CLI 启动独立的可见 Chrome/Chromium，正常执行网页脚本；等待页面 load 后固定再等 **5 秒**，执行 extra.js 的完整内容。同步 JSON 对象通过校验后写入 out/data.json，已有数据文件被覆盖，其他文件保留。加载失败、HTTP 4xx/5xx、提取、校验或写入失败不会替换原数据。固定 5 秒不保证所有网站的异步数据都已到达，提取使用当时的 DOM；没有选择器或等待时长参数。
 
 随后 CLI 启动仅监听 `127.0.0.1` 的 HTTP server，自动选择空闲端口，并在同一浏览器中打开 widget.html。页面按 meta 的参考尺寸显示，并从磁盘上的 data.json 读取数据。等 widgetReady、字体和图片完成后，终端打印 `Data saved:` 和 `Preview ready:`；只有这些步骤成功才报告就绪。渲染失败会退出并报告错误，已成功生成的 data.json 保留。
 
-终端持续运行供查看；按 Ctrl-C、发送 SIGTERM、关闭预览标签页或关闭该浏览器会结束命令，关闭 HTTP 服务并删除临时浏览器 profile。再次提取时重新运行命令。命令不借用日常浏览器的登录态；本地 file URL 也不能恢复原网站的 origin 或缺失资源。
+终端持续运行供查看；按 Ctrl-C、发送 SIGTERM、关闭预览标签页或关闭该浏览器会结束命令，关闭 HTTP 服务并删除临时浏览器 profile。再次提取时重新运行命令。命令不借用日常浏览器的登录态，不恢复捕获时的滚动位置或点击状态。在线列表内容可能已变化；显式 file URL 不能恢复原网站 origin 或缺失资源，精简的捕获 HTML 也不是完整网站存档。
 
 浏览器可执行文件通过 `CHROME_EXECUTABLE` 指定。未设置时，macOS 使用 `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`，其他平台使用 PATH 中的 `chromium`。需要图形桌面环境；CLI 不自动下载浏览器。完整浏览器配置和测试入口见[开发指南](development.md)。

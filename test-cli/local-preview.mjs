@@ -8,8 +8,8 @@ import { parseWidgetMeta, WIDGET_SIZES } from "../backend/src/widget-contract.ts
 import { bounded, launchBrowser } from "./browser.mjs";
 import { startPreviewServer } from "./preview-server.mjs";
 
-export const SOURCE_WAIT_MS = 3_000;
-export const PREVIEW_USAGE = 'usage: webclip preview --out <widget-directory> [--source <source.html>]\n  --source defaults to <widget-directory>/capture/source.html';
+export const SOURCE_WAIT_MS = 5_000;
+export const PREVIEW_USAGE = 'usage: webclip preview --out <widget-directory> [--source <original.html>]\n  Opens pageUrl from <widget-directory>/capture/capture.json; --source explicitly selects an offline HTML file.';
 
 export function parsePreviewArgs(args) {
   if (args.length === 1 && args[0] === '--help') return { help: true };
@@ -24,20 +24,36 @@ export function parsePreviewArgs(args) {
     options[key] = resolve(value);
   }
   if (!options.out) throw new Error(PREVIEW_USAGE);
-  options.source ??= join(options.out, 'capture', 'source.html');
   return options;
 }
 
 export async function previewInputs({ source, out }) {
-  const sourcePath = await realpath(source);
   const directory = await realpath(out);
   if (!(await stat(directory)).isDirectory()) throw new Error(`Not a widget directory: ${out}`);
-  for (const path of [sourcePath, ...['extra.js', 'widget.html', 'meta.json'].map(name => join(directory, name))]) {
+  for (const path of ['extra.js', 'widget.html', 'meta.json'].map(name => join(directory, name))) {
     if (!(await stat(path)).isFile()) throw new Error(`Expected a file: ${path}`);
   }
   const meta = parseWidgetMeta(await readFile(join(directory, 'meta.json'), 'utf8'));
   const extra = await readFile(join(directory, 'extra.js'), 'utf8');
-  return { source: sourcePath, out: directory, extra, size: meta.size };
+  let url, viewport;
+  if(source!==undefined){
+    const sourcePath=await realpath(source);
+    if(!(await stat(sourcePath)).isFile())throw new Error(`Expected a file: ${sourcePath}`);
+    url=pathToFileURL(sourcePath).href;
+  } else {
+    const path=join(directory,'capture','capture.json');
+    let capture;
+    try { capture=JSON.parse(await readFile(path,'utf8')); }
+    catch(error){throw new Error(`Cannot read capture metadata ${path}: ${error.message}. Use --source <original.html> for offline preview.`);}
+    try {
+      if(typeof capture?.pageUrl!=='string'||!['http:','https:'].includes(new URL(capture.pageUrl).protocol))throw new Error();
+    } catch {throw new Error(`Missing or invalid HTTP/HTTPS pageUrl in ${path}. Use --source <original.html> for offline preview.`);}
+    const {width,height}=capture.viewport??{};
+    if(![width,height].every(value=>Number.isSafeInteger(value)&&value>0&&value<=10_000_000))throw new Error(`Invalid capture viewport in ${path}`);
+    url=capture.pageUrl;
+    viewport={width,height,deviceScaleFactor:1};
+  }
+  return { url, viewport, out: directory, extra, size: meta.size };
 }
 
 /** Preserves existing data on validation, staging or rename failure. */
@@ -58,8 +74,10 @@ export async function writePreviewData(out, json, signal) {
 
 /** The fixed delay starts after load, and stays interruptible. */
 export async function loadAndExtract(page, input, { signal, wait = delay, report = console.log } = {}) {
-  await bounded(page.goto(pathToFileURL(input.source).href, { waitUntil: 'load', timeout: 30_000 }), { signal, label: 'Source loading' });
-  report('Source loaded; waiting 3 seconds before extraction.');
+  if(input.viewport)await bounded(page.setViewport(input.viewport),{signal,label:'Source viewport'});
+  const response=await bounded(page.goto(input.url, { waitUntil: 'load', timeout: 30_000 }), { signal, label: 'Source loading' });
+  if(response&&response.status()>=400)throw new Error(`Source loading failed: HTTP ${response.status()}`);
+  report('Source loaded; waiting 5 seconds before extraction.');
   await wait(SOURCE_WAIT_MS, undefined, { signal });
   signal?.throwIfAborted();
   return bounded(page.evaluate(extractionExpression(input.extra)), { signal, label: 'extra.js execution' });
