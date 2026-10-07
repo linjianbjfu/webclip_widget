@@ -26,6 +26,8 @@ npm run test-cli -- rm <session>           # 删除会话
 
 `chat` 里以 `/` 开头的行是命令，其余按原文发送；想发以斜杠开头的文本就写 `//`。
 
+`preview_widget` 在实时输出和历史回放中显示 `validation: passed` 或 `validation: failed`，并列出尺寸、语法检查和错误原因；重复的错误合并显示，截图与页面全文不打印。浏览器启动等工具执行异常显示 `ERROR`。其他工具的 `ok` 仅表示执行未报错。
+
 | 命令 | 作用 |
 |---|---|
 | `/help` | 列出全部命令 |

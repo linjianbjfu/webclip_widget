@@ -11,16 +11,21 @@
  * `replay` selects where the conversation text comes from. A live turn streams
  * it as `stream` deltas and also records it in an `entry`; printing both shows
  * every reply twice. A replay carries no deltas at all — `stream` is not a
- * replayable record — so there the entries are the only text.
+ * replayable record — so there the entries are the only text. Preview reports
+ * use entries in both modes: tool_end carries execution status, not validation.
  */
 function render(frame, { replay = false } = {}) {
   const seq = frame.id ? `#${frame.id} ` : "   ";
   switch (frame.event) {
     case "entry":
     case "pi_entry": {
-      if (!replay) return;
       const entry = frame.data;
       if (entry?.type !== "message") return; // model and thinking-level records
+      if (entry.message?.role === "toolResult" && entry.message.toolName === "preview_widget") {
+        renderPreviewResult(entry.message, seq);
+        return;
+      }
+      if (!replay) return;
       const { role, content } = entry.message ?? {};
       for (const block of content ?? []) {
         const line = replayLine(role, block);
@@ -42,6 +47,7 @@ function render(frame, { replay = false } = {}) {
       console.log(`\n${seq}→ ${frame.data.name} ${JSON.stringify(frame.data.args ?? {}).slice(0, 120)}`);
       return;
     case "tool_end":
+      if (frame.data.name === "preview_widget") return;
       console.log(`${seq}← ${frame.data.name} ${frame.data.isError ? "ERROR" : "ok"}`);
       return;
     case "out_file":
@@ -60,6 +66,20 @@ function render(frame, { replay = false } = {}) {
       return;
     default:
       console.log(`${seq}${frame.event}`);
+  }
+}
+
+function renderPreviewResult(message, seq) {
+  const lines = (message.content ?? [])
+    .filter(block => block.type === "text")
+    .map(block => block.text)
+    .join("\n")
+    .split("\n");
+  const end = lines.findIndex(line => /^(rendered text|extracted data):/.test(line));
+  const [first, ...details] = lines.slice(0, end < 0 ? lines.length : end);
+  console.log(`${seq}← preview_widget ${message.isError ? "ERROR " : ""}${first || "result unavailable"}`);
+  for (const line of new Set(details)) {
+    if (line) console.log(`   ${line}`);
   }
 }
 
