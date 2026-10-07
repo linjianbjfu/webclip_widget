@@ -13,7 +13,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "verify-model-limits": "node scripts/verify-model-limits.ts",
-    "check": "npm run typecheck && npm test && npm run verify-model-limits"
+    "verify-design-system": "node scripts/verify-design-system.ts",
+    "check": "npm run typecheck && npm run verify-design-system && npm test && npm run verify-model-limits"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "^1.2.1",

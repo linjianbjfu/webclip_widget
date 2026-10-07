@@ -14,6 +14,8 @@ extra.js 是同步、立即执行并返回 JSON 对象的表达式，例如 `(()
 
 提取表达式与 JSON 校验由 extraction.ts 共享；[本地 preview 命令](../feature/2026-10-05-cli-local-widget-preview.md)使用真实加载后的源网页 document，服务端使用捕获文档。
 
+图片的 base64 data URI 是同步返回对象中的字符串，不引入 Promise 或宿主函数。[Design System 决策](../feature/2026-10-06-minimal-widget-design-style.md)定义选区 img 转换范围；捕获文档未加载的远程图片可为空，在线提取需要原网页验证。网页 canvas 内容不在提取支持范围内。
+
 此选择替代[静态 widget](../feature/2026-09-30-static-ios-widget-artifacts.md)的命名提取入口；[运行时 data.json](../feature/2026-10-01-widget-runtime-data-json.md)的文件和 HTTP 流程继续适用。相关笔记的独立理由保持活跃并互相链接，没有归档或删除。
 
 ## 曾考虑的替代方案

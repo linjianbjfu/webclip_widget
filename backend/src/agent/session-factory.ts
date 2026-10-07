@@ -32,6 +32,7 @@ import {
 import { withWorkspaceShellBrief } from "./bash-brief.ts";
 import { createWidgetResourceLoader } from "./widget-resources.ts";
 import { createPreviewTool } from "./preview.ts";
+import { createDesignContextTool } from "./design-context.ts";
 import { createWorkspaceOperations } from "./operations.ts";
 import { WORKSPACE_ROOT, OUT_DIR, createShell } from "../shell/bash.ts";
 import type { WorkspaceFs } from "../fs/workspace-fs.ts";
@@ -98,6 +99,7 @@ export async function openSession(input: OpenSessionInput): Promise<OpenedSessio
   // `createAgentSession` directly does nothing: the built-ins stay in place and
   // reach for the local filesystem and `child_process.spawn`.
   const customTools = [
+    createDesignContextTool(),
     // Offered only when the binding exists: a tool the model can call but
     // that always fails is worse than one it never sees.
     ...(input.browser ? [createPreviewTool(input.browser, input.fs)] : []),

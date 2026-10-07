@@ -121,6 +121,8 @@ npm run test-cli -- preview --help
 
 CLI 启动独立的可见 Chrome/Chromium，正常执行网页脚本；等待页面 load 后固定再等 **5 秒**，执行 extra.js 的完整内容。同步 JSON 对象通过校验后写入 out/data.json，已有数据文件被覆盖，其他文件保留。加载失败、HTTP 4xx/5xx、提取、校验或写入失败不会替换原数据。固定 5 秒不保证所有网站的异步数据都已到达，提取使用当时的 DOM；没有选择器或等待时长参数。
 
+提取结果可含选区图片的 base64 data URI，widget 直接从 data.json 显示，不再次请求原图 URL。跨域像素不可读或图片未就绪时可省略图片；服务端捕获 DOM 预览不能替代这条在线路径。renderer 已移除或隐藏的可选坏图不阻止就绪，仍可见的图片解码失败会报错。图片预算与支持边界见[产物协议](protocol.md#widget-文件与截图)。
+
 随后 CLI 启动仅监听 `127.0.0.1` 的 HTTP server，自动选择空闲端口，并在同一浏览器中打开 widget.html。页面按 meta 的参考尺寸显示，并从磁盘上的 data.json 读取数据。等 widgetReady、字体和图片完成后，终端打印 `Data saved:` 和 `Preview ready:`；只有这些步骤成功才报告就绪。渲染失败会退出并报告错误，已成功生成的 data.json 保留。
 
 终端持续运行供查看；按 Ctrl-C、发送 SIGTERM、关闭预览标签页或关闭该浏览器会结束命令，关闭 HTTP 服务并删除临时浏览器 profile。再次提取时重新运行命令。命令不借用日常浏览器的登录态，不恢复捕获时的滚动位置或点击状态。在线列表内容可能已变化；显式 file URL 不能恢复原网站 origin 或缺失资源，精简的捕获 HTML 也不是完整网站存档。

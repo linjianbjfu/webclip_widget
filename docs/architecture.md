@@ -31,6 +31,8 @@ turn 在 SSE 响应返回后继续执行。[alarm 策略](../backend/src/do/turn
 
 [BriefProvider](../backend/src/agent/brief.ts)定义源网页提取、三文件交付、尺寸自动选择和静态截图要求；具体契约见[产物协议](protocol.md#widget-文件与截图)。同一会话的 `system()` 必须保持字节稳定；时间戳、随机值或不稳定顺序会影响上游前缀缓存。`strip()` 提供移除 brief 的接口，但 HTTP 历史发送 pi 条目和 image_ref 图片引用，未调用 brief 的文本投影接口。
 
+[Design System](design-system.md)独立维护核心原则、tokens、组件与布局模式。brief 包含核心原则和自动生成的模式摘要；只读工具 `get_design_context` 按需提供完整设计上下文，复用 pi 的工具调用与会话恢复流程。定义静态打包进 Worker，不访问开发机目录，也不要求 widget 加载运行时组件库。
+
 ## 使用边界
 
 - 共享密钥不验证用户身份，用户之间尚无可信的安全隔离。

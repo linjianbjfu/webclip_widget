@@ -34,7 +34,7 @@ export function createPreviewTool(browserBinding: BrowserRun, fs: WorkspaceFs) {
     description:
       "Check the three out/ artifacts, evaluate extra.js directly against source.html and use its returned object without executing captured scripts, " +
       "serve the result as data.json and wait for widgetReady at the meta.json size. Returns loading, syntax/runtime/resource errors, data " +
-      "mismatches, viewport/root bounds, overflow and motion findings, text and a screenshot. " +
+      "mismatches, viewport/root bounds, overflow and motion findings, text and a screenshot. Inert captures do not load remote source images; live img-to-base64 extraction needs original-page verification. " +
       `Extracted JSON is saved to ${EXTRACTED_PATH}; read it to check the extractor/renderer data fields.`,
     promptSnippet: "preview_widget — verify data.json loading, extraction and static layout at the selected size",
     parameters: Type.Object({}),

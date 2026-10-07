@@ -168,6 +168,10 @@ widget 构建的交付文件为 `out/extra.js`、`out/widget.html`、`out/meta.j
 
 脚本直接读取源网页的 `document`，变量留在 IIFE 内，可重复执行。它不修改网页、不发网络请求、不执行捕获 HTML 中的脚本，也不负责写文件；客户端将执行结果序列化为 data.json。
 
+模型可自主选择区域内适合 widget 构图的图片。extra.js 可将已有 PNG/JPEG/WebP base64 data URI，或已加载且像素可读的 img 转成静态图片 data URI，随业务记录写入返回对象；图片字段不可用时为 null，字段名由当前 bundle 约定。转换允许创建未挂载的临时 canvas、读取图片固有尺寸并编码，不读取网页 canvas、不修改原 img、不发起图片请求。模型获得的提取示例限制每次最多 3 张、每 URI 180,000 字符、合计 360,000 字符（均含前缀）；转换的图片最长边不超过 512px且不放大。已有 data URI 受字符预算限制。超限不截断编码，图片读取或转换失败时省略该可选图片。
+
+网页能显示跨域图片不意味着脚本能读取像素；无 CORS 授权时 canvas 导出可能失败，不保证所有原图都可提取。widget 不使用图片 URL 兜底，以免在新来源下触发防盗链。核心信息只存在于网页 canvas 且没有 DOM 表示时，允许明确生成失败；存在无关 canvas 不影响可提取的 DOM 内容。
+
 `widget.html` 使用内嵌 CSS 和 JS，定义同步函数 `window.renderWidget(data)`。每次调用替换当前内容；数据结构由同一 bundle 的提取和渲染脚本共同约定。页面每次加载时通过 `fetch('./data.json', { cache: 'no-store' })` 获取同目录数据，检查 HTTP 状态、解析 JSON 后渲染。HTML 不内嵌捕获数据或使用写死的数值兜底；源文本作为文本写入 DOM，widget 页面不加载 `extra.js`。
 
 客户端在原网页 WebView 中直接执行 `extra.js` 的完整内容，将执行返回的对象序列化为同目录的 `data.json`。随后启动本地 HTTP server，以 HTTP URL 打开 `widget.html`。`data.json` 是客户端运行时文件，不属于服务端交付的三个文件；下载 HTML 后仅用 file:// 打开不属于受支持的数据加载流程。
@@ -176,7 +180,11 @@ HTML 在同步初始化时公开 `window.widgetReady` Promise，只有数据请�
 
 生成页面用于静态截图：禁止 CSS/JS/SVG 动画、过渡、动图、视频、定时刷新或依赖点击、hover、滚动的内容。除同目录 data.json 外，所需样式、脚本和静态图片均内嵌，不依赖远程资源。
 
+业务图片从 data.json 读取，不能固定为捕获时的图片常量。renderer 校验栅格图片 data URI，在设置 src 前注册失败处理；坏图移除或隐藏后保留可读文字。重复渲染替换旧图片。浏览器与 CLI 等待可见图片解码；仍可见的解码失败图片使预览失败，已移除或隐藏的可选图片可降级。默认视觉规范及扩展方式见 [Design System](design-system.md)。
+
 `preview_widget` 在独立浏览器页面中用 DOMParser 解析 `/source.html`，将捕获文档绑定为 document，直接求值整份 extra.js 并读取完成值，将结果作为同源 `/data.json` 的 HTTP 响应。预览按 metadata 设置画布，等待 widgetReady（最多 15 秒），要求实际发生数据请求，再检查数据渲染一致性、重复渲染、根边界、溢出和可检测的动画声明。截图保留页面实际加载后的状态，后续诊断调用不能替页面补好截图。完整提取 JSON 写到工作区 `/widget-preview-data.json` 供模型检查字段，该临时文件不交付。单次预览不能穷尽任意 JS 定时行为或动图，也不能证明每个字段都来自正确的源区域；Chromium 结果不能替代 WKWebView 真机验证。
+
+捕获文档不会加载远程图片，离线预览可验证已有 data URI 和缺图布局，但不能证明在线 img 转 base64 成功；该路径需在原网页预览验证。模型检查提取 JSON 时读取所需字段，避免把大段 base64 输出进上下文。
 
 ### 错误与中止
 

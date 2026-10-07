@@ -14,7 +14,9 @@ widget 页面用于 iOS 桌面背景截图，需要有明确的尺寸、稳定�
 
 交付 `extra.js`、`widget.html`、`meta.json`。metadata 只有 `size: small | middle | large`。HTML 自适应宿主 viewport，服务端用 small 160×160、middle 344×160、large 344×360 CSS px 作为预览基准，不把某一机型的尺寸写死进产物。
 
-用户显式尺寸优先；首次未指定时，模型选择能清楚呈现内容的最小档位，后续保留已有尺寸，除非用户或内容需求改变。prompt 不规定配色、字体、圆角或装饰模板；禁止 CSS/JS/SVG 动画、过渡、动图、视频和依赖交互、滚动、定时刷新的内容。详细接口由[产物协议](../../../../docs/protocol.md#widget-文件与截图)拥有。
+用户显式尺寸优先；首次未指定时，模型选择能清楚呈现内容的最小档位，后续保留已有尺寸，除非用户或内容需求改变。默认设计值与布局指引由 [Design System](../../../../docs/design-system.md) 拥有，用户明确风格优先，不固定套用装饰模板。禁止 CSS/JS/SVG 动画、过渡、动图、视频和依赖交互、滚动、定时刷新的内容。详细接口由[产物协议](../../../../docs/protocol.md#widget-文件与截图)拥有。
+
+[Design System 决策](../feature/2026-10-06-minimal-widget-design-style.md)拥有默认视觉层次、图形与图片的使用范围；三文件、尺寸和静态截图约束继续由本记录拥有。
 
 `extra.js` 的命名函数入口由[直接执行脚本决策](../simplification/2026-10-01-direct-extraction-script.md)替代，脚本执行后直接返回对象；`widget.html` 定义同步的 `renderWidget(data)`，两者共享当前 bundle 的数据结构。该决策最初采用内嵌捕获快照与宿主注入。数据来源及对应预览方式由[运行时 data.json 决策](2026-10-01-widget-runtime-data-json.md)替代，当前客户端负责写入 data.json，HTML 经 HTTP 加载后渲染；三文件交付、尺寸和 SDK 接入理由继续有效。
 

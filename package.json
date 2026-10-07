@@ -21,9 +21,11 @@
     "e2e": "node test-cli/index.mjs check",
     "test-cli": "node test-cli/index.mjs",
     "verify-model-limits": "npm run verify-model-limits --workspace @webclip/backend --",
+    "verify-design-system": "npm run verify-design-system --workspace @webclip/backend --",
     "test:cli": "node --test test-cli/*.test.mjs",
     "test:browser": "node --test backend/src/agent/*.browser.test.mjs test-cli/browser-tests/*.test.mjs",
     "e2e:widgets": "node test-cli/widget-checks.mjs",
+    "e2e:design": "node test-cli/design-checks.mjs",
     "test:agent": "node --test backend/src/agent/*.node.test.mjs",
     "e2e:capture": "node test-cli/capture-checks.mjs"
   },

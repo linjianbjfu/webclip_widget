@@ -1,5 +1,6 @@
 /** Browser verification shared by Browser Run and the local browser regression tests. */
 import { extractionExpression } from "./extraction.ts";
+import { IMAGE_READINESS } from "./image-readiness.ts";
 import type { Browser } from "@cloudflare/puppeteer";
 import { WIDGET_SIZES, type WidgetSize } from "../widget-contract.ts";
 
@@ -93,7 +94,7 @@ const INSPECT = `(() => {
 
 const READY = `Promise.all([
   document.fonts.ready,
-  ...Array.from(document.images, image => image.decode().catch(() => {}))
+  ${IMAGE_READINESS}
 ])`;
 
 /** Uses isolated pages, never navigates to the captured source or executes its scripts. */
@@ -176,7 +177,7 @@ export async function renderWidgetPreview(browser: Browser, files: PreviewFiles)
       note(`data loading: ${String(error)}`);
     }
     if (dataRequests === 0) note("widget.html must fetch same-directory ./data.json");
-    await page.evaluate(READY);
+    try { await page.evaluate(READY); } catch (error) { note(`images: ${String(error)}`); }
     type Inspection = { root: PreviewResult["root"]; errors: string[]; text: string };
     const inspected = await page.evaluate(INSPECT) as Inspection;
     inspected.errors.forEach(note);

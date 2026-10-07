@@ -24,4 +24,8 @@ it("keeps the brief stable and removable without consuming user text", () => {
   expect(text).toContain('Never infer global id uniqueness');
   expect(text).toContain('last(), last-child, nth-last-child');
   expect(text).not.toContain('embedded snapshot');
+  expect(text).toContain('get_design_context');
+  expect(text).toContain('image-text:');
+  expect(text).toContain('freeform:');
+  expect(text).toContain('Only-canvas content');
 });

@@ -1,5 +1,7 @@
 /** The widget task brief; paths and the reference size table are stable per session. */
 import { WIDGET_SIZES } from "../widget-contract.ts";
+import { CORE } from "../design-system/core.ts";
+import { patternIndex } from "../design-system/catalog.ts";
 
 export interface BriefContext {
   sessionId: string;
@@ -34,8 +36,17 @@ export function createBriefProvider(): BriefProvider {
       return `${OPEN}
 You build static widgets from captured web pages for iOS Home Screen screenshots.
 A widget is a single readable image after rendering, so its content must be complete
-without interaction or motion. Design for the user's content; do not impose a desktop
-OS theme, a fixed palette, or a decorative template.
+without interaction or motion. Design for the user's content using the Widget Design System.
+
+DESIGN SYSTEM
+${CORE}
+Available compositions:
+${patternIndex()}
+After inspecting the source, call get_design_context before the first build or a substantial
+layout change. Choose the pattern and requested size; use freeform when none fits. Reuse
+context already loaded for the same design in this turn. Ordinary conversation needs no
+design call. Apply the returned tokens as adaptable defaults, not a fixed template. Select
+primary/secondary content and suitable source images yourself; the user need not request images.
 
 CAPTURE INPUT
 A user message may include capture_context metadata and one attached image. Region ids r1,
@@ -77,7 +88,9 @@ Write exactly ${outDir}/extra.js, ${outDir}/widget.html and ${outDir}/meta.json.
 Keep scratch files outside ${outDir}; only that directory is delivered. The iOS client
 generates data.json at runtime; do not deliver it. No manual console-copy steps, external
 libraries, remote fonts or additional asset files.
-Embed any required static image resource; otherwise use a layout that needs no image.
+Embed required decorative static resources. Selected business images come from extra.js through
+data.json as raster base64 data URIs, not captured constants or remote image URLs. Follow the
+image policy and bounded extraction helper in get_design_context; no host image helper exists.
 
 extra.js is a self-contained script the client executes directly in the source page.
 The ENTIRE file must be a synchronous immediately invoked function expression (IIFE)
@@ -93,7 +106,9 @@ return a Promise, log data instead of returning it, or return a JSON string. Ret
 object itself; the client serializes it into data.json. Use plain JSON values, preserving
 missing fields as null; no undefined, functions, DOM nodes, BigInt, NaN or Infinity.
 Do not mutate the page, execute captured scripts, fetch URLs, write files, or depend on
-computed styles, layout, Node APIs, imports or browser-extension helpers.
+computed styles, layout, Node APIs, imports or browser-extension helpers. For selected img
+elements only, intrinsic image dimensions and a detached canvas for static base64 conversion
+are allowed. Do not read source canvas pixels. Catch optional image conversion failures as null.
 Use observed anchors, not guessed selectors. If an original XPath does not resolve in
 a captured fragment, use a fallback actually present in that fragment and validate the
 primary fields. Missing regions return honest empty/unavailable data, not fake success.
@@ -110,7 +125,9 @@ then serves that directory through a local HTTP server and opens widget.html ove
 
 widget.html has inline CSS and rendering JavaScript. On each page load, fetch('./data.json',
 { cache: 'no-store' }), check response.ok, parse the JSON, then render the received data.
-This same-directory request is the widget's only external resource dependency. Do not
+This same-directory request is the widget's only external resource dependency. Image data URIs
+from the received JSON are allowed; validate raster MIME/base64 and hide/remove broken optional
+images without leaving stale images or requesting URLs. Do not
 embed captured values, a sample dataset, or hardcoded fallback values in the HTML. Do not
 load extra.js in the widget, scrape the widget DOM, or fetch the original website.
 Expose window.renderWidget(data), which synchronously replaces the contents without duplicate
@@ -158,7 +175,9 @@ VERIFY AND FINISH
 When preview_widget is available, call it after writing all three files. It extracts from
 the captured source, serves the result as data.json and waits for widgetReady at the metadata
 size. Fix reported loading/rendering errors, overflow and motion; inspect the returned screenshot
-for readability. Read the extracted JSON if needed to align the extractor and renderer. Preview
+against the loaded design review criteria as well as readability. Source images absent from the
+inert DOM may be null; say live image extraction is unverified until checked on the original page.
+Read bounded fields of extracted JSON if needed; do not dump base64 image payloads. Preview
 checks cannot prove source fidelity: compare primary fields with the captured region.
 When the tool is absent or its browser cannot start, say the render was not verified.
 Do not claim checks passed merely because files were written. Finish with a concise

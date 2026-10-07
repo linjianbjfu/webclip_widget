@@ -7,6 +7,7 @@ import {createServer} from 'node:http';
 import {once} from 'node:events';
 import { runLocalPreview } from '../local-preview.mjs';
 import { bounded, launchBrowser } from '../browser.mjs';
+import { IMAGE_EXTRACTOR } from '../../backend/src/design-system/images.ts';
 
 async function fixture(t, size = 'small', value = 7) {
   const root = await mkdtemp(join(tmpdir(), 'webclip-live-preview-'));
@@ -126,4 +127,23 @@ test('browser shutdown cancels a timed-out renderer and removes its profile', as
   await owned.close();
   await owned.closed;
   await assert.rejects(stat(owned.profile),{code:'ENOENT'});
+});
+
+test('local preview renders extracted image data and accepts optional image removal', async t => {
+  const input=await fixture(t);
+  await writeFile(input.source,'<p id="value">7</p><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLttAAAAABJRU5ErkJggg==">');
+  await writeFile(join(input.out,'extra.js'),`(() => {${IMAGE_EXTRACTOR} return {value:7,image:createImageExtractor()(document.querySelector('img'))};})()`);
+  await writeFile(join(input.out,'widget.html'),`<main id="widget-root"></main><script>
+    window.renderWidget=d=>{const root=document.querySelector('#widget-root');root.replaceChildren();const p=document.createElement('p');p.textContent=d.value;root.append(p);if(d.image){const img=new Image();img.onerror=()=>img.remove();img.src=d.image;root.append(img);}};
+    window.widgetReady=fetch('./data.json').then(r=>r.json()).then(renderWidget);window.widgetReady.catch(()=>{});
+  </script>`);
+  const first=preview(t,input), info=await first.ready;
+  assert.match(JSON.parse(await readFile(info.dataPath,'utf8')).image,/^data:image\/png;base64,/);
+  assert.equal(await info.page.evaluate(()=>document.querySelector('img')?.naturalWidth),1);
+  first.stop.abort();await first.done;
+  await writeFile(join(input.out,'extra.js'),'(() => ({value:8,image:"data:image/png;base64,bm90LXBuZw=="}))()');
+  const second=preview(t,input), fallback=await second.ready;
+  assert.equal(await fallback.page.evaluate(()=>document.querySelectorAll('img').length),0);
+  assert.equal(await fallback.page.evaluate(()=>document.querySelector('#widget-root').textContent),'8');
+  second.stop.abort();await second.done;
 });

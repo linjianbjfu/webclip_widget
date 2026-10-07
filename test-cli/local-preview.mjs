@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { extractionExpression } from "../backend/src/agent/extraction.ts";
+import { IMAGE_READINESS } from "../backend/src/agent/image-readiness.ts";
 import { parseWidgetMeta, WIDGET_SIZES } from "../backend/src/widget-contract.ts";
 import { bounded, launchBrowser } from "./browser.mjs";
 import { startPreviewServer } from "./preview-server.mjs";
@@ -121,7 +122,7 @@ export async function runLocalPreview(options, { signal, headless = false, repor
       }
       await window.widgetReady;
       await document.fonts.ready;
-      await Promise.all([...document.images].map(image => image.decode()));
+      await ${IMAGE_READINESS};
     })()`), { signal: stop.signal, label: 'Widget readiness' });
     stop.signal.throwIfAborted();
     report(`Data saved: ${dataPath}`);

@@ -38,6 +38,7 @@ npm run dev
 | `npm run test:browser` | 本地 Chrome 中的提取、三档布局、溢出/动画及本地预览生命周期 |
 | `npm run verify-docs` | README、根指令和 docs 中的本地 Markdown 链接目标 |
 | `npm run verify-notes` | Agent Note 分类、格式与归档封存 |
+| `npm run verify-design-system` | 设计目录的 ID、引用、尺寸、tokens 与上下文预算 |
 | `npm run verify-model-limits` | 模型注册表与网关公布的上限 |
 | `npm run check` | 上述检查的串行聚合，任一失败即停止 |
 
@@ -52,6 +53,8 @@ CLI 测试与实现并置于 `test-cli/*.test.mjs`，使用独立临时目录与
 文档链接检查只检查本地文件或目录是否存在，不检查 URL 可访问性、标题锚点或行为描述。新改的命令与行为需要相应的执行证据；不能运行的部分应在交付时说明原因。
 
 ### 真实服务检查
+
+设计变更另运行 `npm run e2e:design`，使用下方相同的 CLI 环境变量。它覆盖三档尺寸、进度与历史、自动选图、深色/不用图的后续修改、缺少历史、自由组合与 canvas-only 失败；保留产物、截图和用量记录供目视检查。运行方式及扩展规则见 [Design System](design-system.md)。
 
 先运行本地服务或准备已部署的服务，再配置 CLI：
 
