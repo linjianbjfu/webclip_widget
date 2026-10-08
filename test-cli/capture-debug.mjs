@@ -17,7 +17,7 @@ export async function saveCaptureDebug({ sessionId, captured, root }) {
     staging = await mkdtemp(join(parent, '.capture-'));
     const next = join(staging, 'next');
     await mkdir(next);
-    for (const name of [capture.source, ...capture.images.map(image => image.file)]) {
+    for (const name of [capture.source, ...(capture.version===2?[capture.dom]:[]), ...capture.images.map(image => image.file)]) {
       const sources = captured.files.filter(path => basename(path) === name);
       if (sources.length !== 1) throw new Error(`Capture debug input missing or duplicated: ${name}`);
       await copyFile(sources[0], join(next, name));

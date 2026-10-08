@@ -55,7 +55,7 @@ test('URL preview uses the captured viewport and live data without a source.html
   await mkdir(join(input.out,'capture'));
   await writeFile(join(input.out,'capture','capture.json'),JSON.stringify({pageUrl:source.url+'/final?q=1#news',requestUrl:source.url+'/wrong',baseUrl:source.url+'/assets/',viewport:{width:1111,height:777}}));
   await rm(input.source);
-  await writeFile(join(input.out,'extra.js'),`(() => ({value:Number(document.querySelector('#value').textContent),label:'实时',width:innerWidth,height:innerHeight,dpr:devicePixelRatio,loaded:window.sourceLoaded,url:location.href}))()`);
+  await writeFile(join(input.out,'extra.js'),`(async () => ({value:await Promise.resolve(Number(document.querySelector('#value').textContent)),label:'实时',width:innerWidth,height:innerHeight,dpr:devicePixelRatio,loaded:window.sourceLoaded,url:location.href}))()`);
   const run=preview(t,{out:input.out}),info=await run.ready;
   const data=await (await fetch(new URL('data.json',info.url))).json();
   assert.deepEqual(data,{value:42,label:'实时',width:1111,height:777,dpr:1,loaded:true,url:source.url+'/final?q=1#news'});
@@ -110,7 +110,7 @@ test('extraction failure preserves existing data and widget readiness failure is
   await writeFile(join(input.out,'data.json'),'{"previous":true}');
   await writeFile(join(input.out,'extra.js'),'window.extractWidget = () => ({value:7})');
   const messages=[];
-  await assert.rejects(runLocalPreview(input,{headless:true,report:message=>messages.push(message)}),/synchronous JSON object/);
+  await assert.rejects(runLocalPreview(input,{headless:true,report:message=>messages.push(message)}),/must resolve to a JSON object/);
   assert.equal(await readFile(join(input.out,'data.json'),'utf8'),'{"previous":true}');
   await writeFile(join(input.out,'extra.js'),'(() => ({value:0}))()');
   await writeFile(join(input.out,'widget.html'),'<script>window.widgetReady=Promise.reject(new Error("bad widget"));widgetReady.catch(()=>{})</script>');
@@ -132,7 +132,7 @@ test('browser shutdown cancels a timed-out renderer and removes its profile', as
 test('local preview renders extracted image data and accepts optional image removal', async t => {
   const input=await fixture(t);
   await writeFile(input.source,'<p id="value">7</p><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLttAAAAABJRU5ErkJggg==">');
-  await writeFile(join(input.out,'extra.js'),`(() => {${IMAGE_EXTRACTOR} return {value:7,image:createImageExtractor()(document.querySelector('img'))};})()`);
+  await writeFile(join(input.out,'extra.js'),`(async () => {${IMAGE_EXTRACTOR} return {value:7,image:await createImageExtractor()(document.querySelector('img'))};})()`);
   await writeFile(join(input.out,'widget.html'),`<main id="widget-root"></main><script>
     window.renderWidget=d=>{const root=document.querySelector('#widget-root');root.replaceChildren();const p=document.createElement('p');p.textContent=d.value;root.append(p);if(d.image){const img=new Image();img.onerror=()=>img.remove();img.src=d.image;root.append(img);}};
     window.widgetReady=fetch('./data.json').then(r=>r.json()).then(renderWidget);window.widgetReady.catch(()=>{});
@@ -146,4 +146,24 @@ test('local preview renders extracted image data and accepts optional image remo
   assert.equal(await fallback.page.evaluate(()=>document.querySelectorAll('img').length),0);
   assert.equal(await fallback.page.evaluate(()=>document.querySelector('#widget-root').textContent),'8');
   second.stop.abort();await second.done;
+});
+
+test('snapshot preview reconstructs v2 and rejects broken pairs without replacing data',async t=>{
+ const {serializeDomSnapshot}=await import('../../backend/src/dom-snapshot.ts');
+ const input=await fixture(t),folder=join(input.out,'capture');await mkdir(folder);
+ const source='<html><head></head><body><table><tr><td>42</td></tr></table></body></html>';
+ const root=[1,0,'html',[],[[1,0,'head',[],[]],[1,0,'body',[],[[1,0,'table',[],[[1,0,'tr',[],[[1,0,'td',[],[[3,'42']]]]]]]]]]];
+ const dom=await serializeDomSnapshot(source,root);
+ const capture={version:2,dom:'source.dom.json',mode:'regions',source:'source.html',viewport:{width:1280,height:900},regions:[{id:'r1',xpath:'/html/body/table',rect:{x:0,y:0,width:100,height:40},text:'42'}],images:[]};
+ await writeFile(join(folder,'capture.json'),JSON.stringify(capture));await writeFile(join(folder,'source.html'),source);await writeFile(join(folder,'source.dom.json'),dom);
+ await writeFile(join(input.out,'extra.js'),`(() => ({value:Number(document.querySelector('table > tr > td').textContent),label:document.defaultView===null?'快照':'实时'}))()`);
+ const run=preview(t,{out:input.out,snapshot:true}),info=await run.ready;
+ assert.deepEqual(JSON.parse(await readFile(info.dataPath,'utf8')),{value:42,label:'快照'});
+ run.stop.abort();await run.done;
+ const previous=await readFile(info.dataPath,'utf8');
+ for(const broken of ['{bad',dom.replace(/"sourceSha256":"[a-f0-9]+"/,'"sourceSha256":"'+'0'.repeat(64)+'"'),null]){
+  if(broken===null)await rm(join(folder,'source.dom.json'));else await writeFile(join(folder,'source.dom.json'),broken);
+  await assert.rejects(runLocalPreview({out:input.out,snapshot:true},{headless:true,report:()=>{}}));
+  assert.equal(await readFile(info.dataPath,'utf8'),previous);
+ }
 });

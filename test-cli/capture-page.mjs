@@ -1,5 +1,5 @@
 /** Capture one live source DOM and its selected regions before creating a server turn. */
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
@@ -7,6 +7,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { bounded, launchBrowser } from './browser.mjs';
 import { installSelectionUI } from './selection-ui.mjs';
 import { composeCaptureImage } from './capture-images.mjs';
+import { serializeDomSnapshot } from '../backend/src/dom-snapshot.ts';
 import { parseCapture, CAPTURE_LIMITS } from '../backend/src/capture.ts';
 
 export function captureSource({ url, files = [], select = false }) {
@@ -20,12 +21,16 @@ export function captureSource({ url, files = [], select = false }) {
   return url ? {url,html:undefined} : html.length ? {url:pathToFileURL(resolve(html[0])).href,html:html[0]} : null;
 }
 
+export function validateCaptureSizes(sizes) {
+  if(sizes.some(size=>size>CAPTURE_LIMITS.sourceBytes)||sizes.reduce((sum,size)=>sum+size,0)>24*1024*1024)throw new Error('附件超过单文件 16 MiB 或合计 24 MiB，请缩小选区或减少附件');
+}
+
 async function captureOnce(page, compositor) {
   const snapshot = await page.evaluate(() => window.__webclipCapture.snapshot());
   const mode = snapshot.regions.length ? 'regions' : 'page';
   const size = snapshot.documentSize;
   if (mode === 'page' && (size.width * size.height > 80_000_000 || size.height > 100_000 || size.width > 20_000)) throw new Error('页面过大，无法完整截图，请框选区域');
-  if (Buffer.byteLength(snapshot.source) > CAPTURE_LIMITS.sourceBytes) throw new Error('source.html 超过 16 MiB');
+  if (Buffer.byteLength(snapshot.source) > CAPTURE_LIMITS.sourceBytes) throw new Error('source.html 超过 16 MiB，请缩小选区');
   await page.evaluate(() => window.__webclipCapture.hide(true));
   const tiles = [];
   try {
@@ -40,7 +45,7 @@ async function captureOnce(page, compositor) {
       }
     }
     const after = await page.evaluate(() => window.__webclipCapture.snapshot());
-    if (snapshot.source !== after.source || JSON.stringify(snapshot.regions) !== JSON.stringify(after.regions)) throw new Error('页面在捕获期间发生变化，请重新选择/捕获');
+    if (snapshot.source !== after.source || JSON.stringify(snapshot.dom) !== JSON.stringify(after.dom) || JSON.stringify(snapshot.regions) !== JSON.stringify(after.regions)) throw new Error('页面在捕获期间发生变化，请重新选择/捕获');
     const image = await composeCaptureImage(compositor, tiles, mode, size);
     const imageId = mode==='page'?'page-image':'regions-image';
     const filename = image ? (mode==='page'?'page':'regions')+(image.mimeType==='image/png'?'.png':'.jpg') : null;
@@ -48,7 +53,9 @@ async function captureOnce(page, compositor) {
       const index=tiles.findIndex(tile=>tile.id===id);
       return {id,xpath,...(sourceXPath?{sourceXPath}:{}),rect,text,...(index>=0?{imageId,imageRect:image.boxes[index]}:{})};
     });
-    return {snapshot,image,filename,capture:{version:1,mode,source:'source.html',viewport:snapshot.viewport,regions,
+    const domJson=await serializeDomSnapshot(snapshot.source,snapshot.dom);
+    validateCaptureSizes([Buffer.byteLength(snapshot.source),Buffer.byteLength(domJson),image?.bytes??0]);
+    return {snapshot,domJson,image,filename,capture:{version:2,dom:'source.dom.json',mode,source:'source.html',viewport:snapshot.viewport,regions,
       images:image?[{id:imageId,file:filename,width:image.width,height:image.height,originalWidth:image.originalWidth,originalHeight:image.originalHeight,mimeType:image.mimeType,bytes:image.bytes,role:mode==='page'?'full-page':'montage'}]:[]}};
   } finally { await page.evaluate(() => window.__webclipCapture?.hide(false)).catch(()=>{}); }
 }
@@ -115,11 +122,14 @@ export async function capturePage(options, { headless = false, signal, onPage, r
     const capture=parseCapture(result.capture);
     directory=await mkdtemp(join(tmpdir(),'webclip-capture-'));
     await writeFile(join(directory,'source.html'),result.snapshot.source);
+    await writeFile(join(directory,'source.dom.json'),result.domJson);
     if(result.image)await writeFile(join(directory,result.filename),Buffer.from(result.image.data,'base64'));
     const attachments=(options.files??[]).filter(file=>file!==source.html);
-    const reserved=new Set(['source.html',result.filename].filter(Boolean));
+    const reserved=new Set(['source.html','source.dom.json',result.filename].filter(Boolean));
     if(attachments.some(file=>reserved.has(basename(file))))throw new Error('Attachment filename conflicts with captured files');
-    const paths=[join(directory,'source.html'),...(result.filename?[join(directory,result.filename)]:[]),...attachments];
+    const paths=[join(directory,'source.html'),...(result.filename?[join(directory,result.filename)]:[]),join(directory,'source.dom.json'),...attachments];
+    const sizes=await Promise.all(paths.map(path=>stat(path)));
+    validateCaptureSizes(sizes.map(file=>file.size));
     const saved=directory;directory=undefined;
     return {capture,files:paths,dispose:()=>rm(saved,{recursive:true,force:true})};
   } catch(error) {

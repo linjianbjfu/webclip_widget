@@ -1,6 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {launchBrowser} from '../browser.mjs';
+import {DOM_CODEC} from '../../backend/src/dom-snapshot.ts';
 import {installSelectionUI} from '../selection-ui.mjs';
 
 async function fixture(t) {
@@ -22,10 +23,11 @@ async function fixture(t) {
     card.append(following);
   });
   await page.evaluate(installSelectionUI);
+  await page.evaluate(`${DOM_CODEC};window.restoreCapture=decodeDom;`);
   return page;
 }
 
-test('parser repair preserves whole cards/lists and maps moved live XPath without touching the page', async t => {
+test('capture preserves nested links and live XPath without touching the page', async t => {
   const page = await fixture(t);
   const result = await page.evaluate(() => {
     const api = window.__webclipCapture, card = document.querySelector('#card');
@@ -33,18 +35,18 @@ test('parser repair preserves whole cards/lists and maps moved live XPath withou
     const author=card.querySelector('a[href="/author"]');
     api.state.regions = [card, document.querySelector('#list'), author].map((el,i) => ({id:`r${i+1}`,el}));
     const snapshot = api.snapshot();
-    const parsed = new DOMParser().parseFromString(snapshot.source,'text/html');
+    const parsed = window.restoreCapture(snapshot.dom);
     const matches = snapshot.regions.map(r => {
       const nodes = parsed.evaluate(r.xpath,parsed,null,XPathResult.ORDERED_NODE_SNAPSHOT_TYPE,null);
       const el = nodes.snapshotItem(0);
       return {count:nodes.snapshotLength,text:el.textContent,links:[...el.querySelectorAll('a[href]')].map(a=>a.getAttribute('href')),images:[...el.querySelectorAll('img')].map(img=>img.getAttribute('src'))};
     });
     const moved = snapshot.regions[2];
-    const liveMatch = document.evaluate(moved.sourceXPath,document,null,XPathResult.FIRST_ORDERED_NODE_TYPE,null).singleNodeValue;
+    const liveMatch = document.evaluate(moved.xpath,document,null,XPathResult.FIRST_ORDERED_NODE_TYPE,null).singleNodeValue;
     return {snapshot,matches,unchanged:before===document.documentElement.outerHTML,liveMatches:liveMatch===author,repeat:JSON.stringify(snapshot)===JSON.stringify(api.snapshot())};
   });
   assert.ok(result.unchanged); assert.ok(result.repeat); assert.ok(result.liveMatches);
-  assert.notEqual(result.snapshot.regions[2].sourceXPath,result.snapshot.regions[2].xpath);
+  assert.equal(result.snapshot.regions[2].sourceXPath,undefined);
   assert.equal(result.snapshot.regions[0].sourceXPath,undefined);
   assert.doesNotMatch(result.snapshot.source,/data-webclip-(region-map|ui)/);
   for (const match of result.matches.slice(0,2)) {
@@ -55,21 +57,21 @@ test('parser repair preserves whole cards/lists and maps moved live XPath withou
   assert.equal(result.matches[2].text,'作者');
 });
 
-test('split or lost regions are rejected with a region-specific parent-card hint', async t => {
+test('regions that HTML parsers split or drop are captured without repair', async t => {
   const page = await fixture(t);
   await page.evaluate(() => {window.__webclipCapture.state.regions=[{id:'r4',el:document.querySelector('#card > a')}];});
-  await assert.rejects(page.evaluate(() => window.__webclipCapture.snapshot()),/r4.*(拆分|内容).*父区块/);
+  assert.ok((await page.evaluate(() => window.__webclipCapture.snapshot())).dom);
   await page.evaluate(() => {
     const p = document.createElement('p'); p.textContent = '开头';
     const div = document.createElement('div'); div.textContent = '移到外部'; p.append(div); document.body.append(p);
     window.__webclipCapture.state.regions=[{id:'r5',el:p}];
   });
-  await assert.rejects(page.evaluate(() => window.__webclipCapture.snapshot()),/r5.*内容.*父区块/);
+  assert.ok((await page.evaluate(() => window.__webclipCapture.snapshot())).dom);
   await page.evaluate(() => {
     const col=document.createElement('col'); document.body.append(col);
     window.__webclipCapture.state.regions=[{id:'r6',el:col}];
   });
-  await assert.rejects(page.evaluate(() => window.__webclipCapture.snapshot()),/r6.*找不到.*父区块/);
+  await assert.rejects(page.evaluate(() => window.__webclipCapture.snapshot()),/r6.*不可见/);
 });
 
 test('SVG, duplicate ids and ids with both quotes resolve in both documents', async t => {
@@ -81,7 +83,7 @@ test('SVG, duplicate ids and ids with both quotes resolve in both documents', as
     document.body.append(container);
     const elements=[container.querySelector('rect'),...container.querySelectorAll('p')];
     window.__webclipCapture.state.regions=elements.map((el,i)=>({id:`r${i+1}`,el}));
-    const snapshot=window.__webclipCapture.snapshot(), parsed=new DOMParser().parseFromString(snapshot.source,'text/html');
+    const snapshot=window.__webclipCapture.snapshot(), parsed=window.restoreCapture(snapshot.dom);
     return snapshot.regions.map((region,i)=> {
       const match=parsed.evaluate(region.xpath,parsed,null,XPathResult.ORDERED_NODE_SNAPSHOT_TYPE,null);
       const live=document.evaluate(region.sourceXPath??region.xpath,document,null,XPathResult.FIRST_ORDERED_NODE_TYPE,null).singleNodeValue;

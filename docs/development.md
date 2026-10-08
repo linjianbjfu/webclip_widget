@@ -54,7 +54,7 @@ CLI 测试与实现并置于 `test-cli/*.test.mjs`，使用独立临时目录与
 
 ### 真实服务检查
 
-设计变更另运行 `npm run e2e:design`，使用下方相同的 CLI 环境变量。它覆盖三档尺寸、进度与历史、自动选图、深色/不用图的后续修改、缺少历史、自由组合与 canvas-only 失败；保留产物、截图和用量记录供目视检查。运行方式及扩展规则见 [Design System](design-system.md)。
+设计变更另运行 `npm run e2e:design`，使用下方相同的 CLI 环境变量。它覆盖三档尺寸的密集内容取舍及数据更新、明确全量与小尺寸冲突、进度与历史、跨主题选图与无关图省略、图片更新及读取失败降级、深色/不用图的后续修改、缺少历史、自由组合与 canvas-only 失败；保留产物、截图和用量记录供目视检查。运行方式及扩展规则见 [Design System](design-system.md)。
 
 先运行本地服务或准备已部署的服务，再配置 CLI：
 
@@ -120,3 +120,5 @@ npm run e2e:capture
 需要已运行的 backend 和 WEBCLIP_URL/WEBCLIP_TOKEN。该检查启动本地测试网页，分别通过真实框选拼图和无选区整页流程发送请求，调用真实模型并生成 widget。校验码仅画在 canvas 像素上，不出现在提交的 HTML/文本中；必须由模型识别校验码且最终 widget 预览通过。该检查有模型费用，产物留在 downloads，测试会话与临时捕获文件会清理。
 
 新增 capture PNG/JPEG 验证在 Workers 中实际解码，依赖由 backend 的 package.json 拥有。输入与图片引用存储、旧格式恢复及接受请求的副作用顺序由 Workers 测试覆盖；框选、清空、取消、尺寸缩放和图片/DOM 对应由真实浏览器测试覆盖。
+
+`npm run e2e:dom` 使用 WEBCLIP_URL / WEBCLIP_TOKEN，验证真实捕获 v2、上传、模型生成、服务端预览、debug 留存与本地快照重放。受控页面通过 DOM API 创建无 tbody 的表格和嵌套链接卡片；同一生成脚本的实时与离线数据必须一致，证据保存在 downloads/dom-structure-check-*。

@@ -1,4 +1,5 @@
 /** Browser verification shared by Browser Run and the local browser regression tests. */
+import { validateDomSnapshot } from '../dom-snapshot.ts';
 import { extractionExpression } from "./extraction.ts";
 import { IMAGE_READINESS } from "./image-readiness.ts";
 import type { Browser } from "@cloudflare/puppeteer";
@@ -11,6 +12,7 @@ export interface PreviewFiles {
   html: string;
   extra: string;
   source: string;
+  dom?: string;
   size: WidgetSize;
 }
 
@@ -99,6 +101,7 @@ const READY = `Promise.all([
 
 /** Uses isolated pages, never navigates to the captured source or executes its scripts. */
 export async function renderWidgetPreview(browser: Browser, files: PreviewFiles): Promise<PreviewResult> {
+  const dom = files.dom === undefined ? undefined : (await validateDomSnapshot(files.source, files.dom)).root;
   const context = await browser.createBrowserContext();
   const errors: string[] = [];
   const note = (message: string): void => {
@@ -109,7 +112,7 @@ export async function renderWidgetPreview(browser: Browser, files: PreviewFiles)
     const extraction = await context.newPage();
     await extraction.setRequestInterception(true);
     extraction.on("request", request => {
-      note("extra.js must not request network resources");
+      note("extra.js must not request network resources from an inert capture");
       void request.abort().catch(() => {});
     });
     extraction.on("pageerror", error => note(`extraction: ${error.message}`));
@@ -120,7 +123,7 @@ export async function renderWidgetPreview(browser: Browser, files: PreviewFiles)
     let extractedData: string | null = null;
     if (syntaxError === null) {
       try {
-        extractedData = await extraction.evaluate(extractionExpression(files.extra, files.source)) as string;
+        extractedData = await extraction.evaluate(extractionExpression(files.extra, files.source, dom)) as string;
       } catch (error) {
         note(`extraction: ${String(error)}`);
       }

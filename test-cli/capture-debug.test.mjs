@@ -64,3 +64,15 @@ test('missing capture input or invalid destination does not publish a partial sn
   assert.equal(await readFile(folder,'utf8'),'user file');
   assert.deepEqual(await readdir(join(f.root,'session')),['capture']);
 });
+
+test('v2 debug requires its DOM companion and v1 replacement removes it',async t=>{
+ const f=await fixture(t),dom=join(f.source,'..','source.dom.json');
+ await writeFile(dom,'exact snapshot bytes');
+ const captured={files:[...f.captured.files,dom],capture:{...f.captured.capture,version:2,dom:'source.dom.json'}};
+ const folder=await saveCaptureDebug({sessionId:'v2',captured,root:f.root});
+ assert.equal(await readFile(join(folder,'source.dom.json'),'utf8'),'exact snapshot bytes');
+ await assert.rejects(saveCaptureDebug({sessionId:'v2',captured:{...captured,files:f.captured.files},root:f.root}),/missing or duplicated/);
+ assert.equal(await readFile(join(folder,'source.dom.json'),'utf8'),'exact snapshot bytes');
+ await saveCaptureDebug({sessionId:'v2',captured:f.captured,root:f.root});
+ assert.ok(!(await readdir(folder)).includes('source.dom.json'));
+});

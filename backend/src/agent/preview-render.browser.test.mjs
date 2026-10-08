@@ -96,7 +96,7 @@ test("real browser verifies all sizes, source isolation, HTTP data loading, over
   for (const script of [
     "window.extractWidget = () => ({value: 0})",
     "function extractWidget() { return {value: 0}; }",
-    "void 0", "(async () => ({value: 0}))()", "(() => JSON.stringify({value: 0}))()",
+    "void 0", "(async () => ({value: undefined}))()", "(async () => {throw new Error('async extraction failed')})()", "(() => JSON.stringify({value: 0}))()",
     "(() => ({value: undefined}))()", "(() => ({value: NaN}))()", "(() => ({value: 1n}))()",
     "(() => ({value: document.body}))()", "(() => {const data={};data.self=data;return data;})()",
   ]) {
@@ -104,6 +104,11 @@ test("real browser verifies all sizes, source isolation, HTTP data loading, over
     assert.equal(rejected.extractedData, null, script);
     assert.ok(rejected.errors.some(error => error.startsWith('extraction:')), script);
   }
+  const asyncResult = await renderWidgetPreview(browser, {
+    size: "small", source, extra: `(async () => { await Promise.resolve(); return ${JSON.stringify(data)}; })()`, html: widget(),
+  });
+  assert.deepEqual(asyncResult.errors, []);
+  assert.deepEqual(JSON.parse(asyncResult.extractedData), data);
   const live = await browser.newPage();
   await live.setContent(`<p id="value">0</p><p id="label">${data.label}</p>`);
   assert.deepEqual(await live.evaluate(extra), data);

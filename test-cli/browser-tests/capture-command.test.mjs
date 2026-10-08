@@ -41,10 +41,15 @@ test('actual prompt --url captures source and image before posting multipart and
  assert.equal(savedBeforePost,true);assert.match(output,/Capture saved:/);
  const capture=JSON.parse(captured.get('capture'));assert.equal(capture.mode,'page');assert.equal(capture.images.length,1);assert.equal(captured.get('text'),'capture price');
  const uploads=captured.getAll('file');const source=uploads.find(f=>f.name==='source.html');assert.match(await source.text(),/>7<\/p>/);assert.doesNotMatch(await source.text(),/data-webclip-ui/);
+ assert.equal(capture.version,2);assert.equal(capture.dom,'source.dom.json');
+ const domFile=uploads.find(f=>f.name===capture.dom);assert.ok(domFile);
+ const {validateDomSnapshot}=await import('../../backend/src/dom-snapshot.ts');
+ await validateDomSnapshot(await source.text(),await domFile.text());
  assert.ok(uploads.find(f=>f.name===capture.images[0].file));
  for(const file of files)assert.equal(await readFile(join(dir,'downloads',sessionId,file.path.slice(4)),'utf8'),file.content);
  const debug=join(dir,'downloads',sessionId,'capture');
  assert.equal(await readFile(join(debug,'source.html'),'utf8'),await source.text());
+ assert.equal(await readFile(join(debug,'source.dom.json'),'utf8'),await domFile.text());
  const uploadedImage=uploads.find(f=>f.name===capture.images[0].file);
  assert.deepEqual(await readFile(join(debug,capture.images[0].file)),Buffer.from(await uploadedImage.arrayBuffer()));
  rejectPrompt=true;savedBeforePost=false;

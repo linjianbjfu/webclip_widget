@@ -19,7 +19,7 @@ it("keeps the brief stable and removable without consuming user text", () => {
   expect(text).toContain("fetch('./data.json'");
   expect(text).toContain('window.widgetReady');
   expect(text).toContain('region.xpath');
-  expect(text).toContain('optional region.sourceXPath locates the region in the live source DOM');
+  expect(text).toContain('Legacy v1/plain HTML preview has unverified live structure');
   expect(text).toContain('preserving the original forward absolute XPath');
   expect(text).toContain('Never infer global id uniqueness');
   expect(text).toContain('last(), last-child, nth-last-child');

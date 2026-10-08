@@ -1,6 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {launchBrowser} from '../browser.mjs';
+import {DOM_CODEC} from '../../backend/src/dom-snapshot.ts';
 import {installSelectionUI} from '../selection-ui.mjs';
 
 async function fixture(t){
@@ -13,7 +14,7 @@ async function fixture(t){
       <div id="between"><i>中间文字</i></div><section id="branch"><p>前方</p><article id="second"><b>第二个选区</b></article><footer id="branch-tail">后方</footer></section>
       <div id="tail"><div id="news">后方重复 id</div></div>
     </main><aside id="outer-tail">外层后方</aside></body></html>`);
-  await page.evaluate(installSelectionUI);return page;
+  await page.evaluate(installSelectionUI);await page.evaluate(`${DOM_CODEC};window.restoreCapture=decodeDom;`);return page;
 }
 
 test('trailing branches disappear while preceding structure and absolute paths stay intact',async t=>{
@@ -22,7 +23,7 @@ test('trailing branches disappear while preceding structure and absolute paths s
     const api=window.__webclipCapture, news=document.querySelector('.news'), before=document.documentElement.outerHTML;
     const expected=news.outerHTML;
     api.state.regions=[{id:'r1',el:news}];
-    const snapshot=api.snapshot(), doc=new DOMParser().parseFromString(snapshot.source,'text/html'), region=snapshot.regions[0];
+    const snapshot=api.snapshot(), doc=window.restoreCapture(snapshot.dom), region=snapshot.regions[0];
     const match=doc.evaluate(region.xpath,doc,null,XPathResult.FIRST_ORDERED_NODE_TYPE,null).singleNodeValue;
     return {region,unchanged:before===document.documentElement.outerHTML,subtree:match.outerHTML===expected,
       ids:[...doc.querySelectorAll('#news')].length,childTags:[...doc.querySelector('#root').children].map(n=>n.className),
@@ -42,7 +43,7 @@ test('multiple and overlapping regions retain later branches and preserve every 
   const result=await page.evaluate(()=>{
     const selected=[document.querySelector('.news'),document.querySelector('#second'),document.querySelector('#second b')];
     window.__webclipCapture.state.regions=selected.map((el,i)=>({id:`r${i+1}`,el}));
-    const snapshot=window.__webclipCapture.snapshot(),doc=new DOMParser().parseFromString(snapshot.source,'text/html');
+    const snapshot=window.__webclipCapture.snapshot(),doc=window.restoreCapture(snapshot.dom);
     return {matches:snapshot.regions.map((r,i)=>{
       const captured=doc.evaluate(r.xpath,doc,null,XPathResult.FIRST_ORDERED_NODE_TYPE,null).singleNodeValue;
       const live=document.evaluate(r.xpath,document,null,XPathResult.FIRST_ORDERED_NODE_TYPE,null).singleNodeValue;
@@ -76,17 +77,11 @@ test('capture stability ignores discarded content but detects retained data, pat
   assert.match(result.full,/广告文字/);assert.match(result.full,/完全不同的后方结构/);assert.match(result.full,/changed/);
 });
 
-test('a structural change during final parsing is rejected instead of assigning a new path',async t=>{
+test('unsupported DOM nodes are rejected rather than silently removed',async t=>{
   const page=await fixture(t);
   await page.evaluate(()=>{
+    document.querySelector('.news').append(document.createProcessingInstruction('test','payload'));
     window.__webclipCapture.state.regions=[{id:'r1',el:document.querySelector('.news')}];
-    const parse=DOMParser.prototype.parseFromString;let calls=0;
-    DOMParser.prototype.parseFromString=function(...args){
-      const doc=parse.apply(this,args);
-      // Inject a serialization mismatch into this isolated page's final parser result.
-      if(++calls===2)doc.querySelector('main').prepend(doc.createElement('div'));
-      return doc;
-    };
   });
-  await assert.rejects(page.evaluate(()=>window.__webclipCapture.snapshot()),/r1.*重新解析后结构不稳定/);
+  await assert.rejects(page.evaluate(()=>window.__webclipCapture.snapshot()),/Unsupported DOM node type/);
 });

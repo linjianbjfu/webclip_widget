@@ -23,6 +23,9 @@ async function fixture(t) {
 
 test('preview arguments require out and leave the source implicit for URL preview', () => {
   assert.deepEqual(parsePreviewArgs(['--out', 'out', '--source', 'source.html']), { out: resolve('out'), source: resolve('source.html') });
+  assert.deepEqual(parsePreviewArgs(['--out','out','--snapshot']),{out:resolve('out'),snapshot:true});
+  assert.throws(()=>parsePreviewArgs(['--out','out','--snapshot','--source','x']),/mutually exclusive/);
+  assert.throws(()=>parsePreviewArgs(['--out','out','--snapshot','--snapshot']),/Duplicate/);
   assert.deepEqual(parsePreviewArgs(['--help']), { help: true });
   assert.deepEqual(parsePreviewArgs(['--out', 'out']), { out: resolve('out') });
   for (const args of [[], ['--source'], ['--out','--source','x'], ['--source','x'],

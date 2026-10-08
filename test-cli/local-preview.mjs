@@ -3,6 +3,8 @@ import { mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from "node:f
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
+import { parseCapture } from '../backend/src/capture.ts';
+import { validateDomSnapshot } from '../backend/src/dom-snapshot.ts';
 import { extractionExpression } from "../backend/src/agent/extraction.ts";
 import { IMAGE_READINESS } from "../backend/src/agent/image-readiness.ts";
 import { parseWidgetMeta, WIDGET_SIZES } from "../backend/src/widget-contract.ts";
@@ -10,13 +12,14 @@ import { bounded, launchBrowser } from "./browser.mjs";
 import { startPreviewServer } from "./preview-server.mjs";
 
 export const SOURCE_WAIT_MS = 5_000;
-export const PREVIEW_USAGE = 'usage: webclip preview --out <widget-directory> [--source <original.html>]\n  Opens pageUrl from <widget-directory>/capture/capture.json; --source explicitly selects an offline HTML file.';
+export const PREVIEW_USAGE = 'usage: webclip preview --out <widget-directory> [--source <original.html> | --snapshot]\n  Opens pageUrl from <widget-directory>/capture/capture.json; --source loads an HTML file; --snapshot reconstructs the saved capture v2 without executing page scripts.';
 
 export function parsePreviewArgs(args) {
   if (args.length === 1 && args[0] === '--help') return { help: true };
   const options = {};
   for (let i = 0; i < args.length; i++) {
     const name = args[i];
+    if (name === '--snapshot') { if(options.snapshot)throw new Error('Duplicate --snapshot');options.snapshot=true;continue; }
     if (name !== '--source' && name !== '--out') throw new Error(`Unknown preview argument: ${name}\n${PREVIEW_USAGE}`);
     const key = name.slice(2);
     if (options[key] !== undefined) throw new Error(`Duplicate preview argument: ${name}\n${PREVIEW_USAGE}`);
@@ -24,11 +27,12 @@ export function parsePreviewArgs(args) {
     if (!value || value.startsWith('--')) throw new Error(`${name} requires a path\n${PREVIEW_USAGE}`);
     options[key] = resolve(value);
   }
+  if(options.snapshot&&options.source)throw new Error('--snapshot and --source are mutually exclusive');
   if (!options.out) throw new Error(PREVIEW_USAGE);
   return options;
 }
 
-export async function previewInputs({ source, out }) {
+export async function previewInputs({ source, out, snapshot = false }) {
   const directory = await realpath(out);
   if (!(await stat(directory)).isDirectory()) throw new Error(`Not a widget directory: ${out}`);
   for (const path of ['extra.js', 'widget.html', 'meta.json'].map(name => join(directory, name))) {
@@ -36,6 +40,14 @@ export async function previewInputs({ source, out }) {
   }
   const meta = parseWidgetMeta(await readFile(join(directory, 'meta.json'), 'utf8'));
   const extra = await readFile(join(directory, 'extra.js'), 'utf8');
+  if(snapshot){
+    if(source!==undefined)throw new Error('--snapshot and --source are mutually exclusive');
+    const capture=parseCapture(JSON.parse(await readFile(join(directory,'capture','capture.json'),'utf8')));
+    if(capture.version!==2)throw new Error('--snapshot requires capture v2; capture the source again');
+    const html=await readFile(join(directory,'capture',capture.source),'utf8');
+    const dom=await validateDomSnapshot(html,await readFile(join(directory,'capture',capture.dom),'utf8'));
+    return {out:directory,extra,size:meta.size,snapshot:{source:html,dom:dom.root}};
+  }
   let url, viewport;
   if(source!==undefined){
     const sourcePath=await realpath(source);
@@ -75,6 +87,13 @@ export async function writePreviewData(out, json, signal) {
 
 /** The fixed delay starts after load, and stays interruptible. */
 export async function loadAndExtract(page, input, { signal, wait = delay, report = console.log } = {}) {
+  if(input.snapshot){
+    report('Reconstructing capture v2; source scripts and network resources remain inert.');
+    await page.setRequestInterception(true);
+    page.on('request',request=>{void request.abort().catch(()=>{});});
+    return bounded(page.evaluate(extractionExpression(input.extra,input.snapshot.source,input.snapshot.dom)),{signal,label:'Snapshot extraction'});
+  }
+  if(input.url.startsWith('file:'))report('Legacy HTML input: parser repair may differ from the live DOM.');
   if(input.viewport)await bounded(page.setViewport(input.viewport),{signal,label:'Source viewport'});
   const response=await bounded(page.goto(input.url, { waitUntil: 'load', timeout: 30_000 }), { signal, label: 'Source loading' });
   if(response&&response.status()>=400)throw new Error(`Source loading failed: HTTP ${response.status()}`);

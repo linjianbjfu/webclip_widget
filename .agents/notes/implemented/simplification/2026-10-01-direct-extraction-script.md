@@ -8,13 +8,13 @@ Status: implemented
 
 ## 决策
 
-extra.js 是同步、立即执行并返回 JSON 对象的表达式，例如 `(() => { ...; return data; })()`。脚本直接读取源网页 document，变量留在 IIFE 内，不注册全局入口、不要求参数或第二次函数调用，也不自己写文件。客户端序列化执行结果并保存 data.json，HTML 沿用既有 HTTP 数据加载流程。
+extra.js 是立即执行并返回 JSON 对象或其 Promise 的表达式，例如 `(() => { ...; return data; })()`。脚本直接读取源网页 document，变量留在 IIFE 内，不注册全局入口、不要求参数或第二次函数调用，也不自己写文件。客户端等待执行结果后序列化并保存 data.json，HTML 沿用既有 HTTP 数据加载流程。
 
-服务端预览在独立浏览器页面用 DOMParser 构建捕获文档，将其绑定为 document，直接求值整份 extra.js 并读取完成值。捕获 HTML 的脚本不执行。函数、undefined、Promise、字符串、非普通对象及无法 JSON 序列化的结果不能通过验证，JSON 字段中的 undefined、非有限数字等也不能被静默丢弃或替换。
+服务端预览在独立浏览器页面构建惰性捕获文档：v2 从配对结构文件重建，v1/普通 HTML 用 DOMParser 解析（见[结构保真](../../implemented/bug-fix/2026-10-08-capture-live-dom-structure.md)），将其绑定为 document，直接求值整份 extra.js 并等待完成值。捕获 HTML 的脚本不执行。函数、undefined、字符串、非普通对象及无法 JSON 序列化的结果不能通过验证，JSON 字段中的 undefined、非有限数字等也不能被静默丢弃或替换。
 
 提取表达式与 JSON 校验由 extraction.ts 共享；[本地 preview 命令](../feature/2026-10-05-cli-local-widget-preview.md)使用真实加载后的源网页 document，服务端使用捕获文档。
 
-图片的 base64 data URI 是同步返回对象中的字符串，不引入 Promise 或宿主函数。[Design System 决策](../feature/2026-10-06-minimal-widget-design-style.md)定义选区 img 转换范围；捕获文档未加载的远程图片可为空，在线提取需要原网页验证。网页 canvas 内容不在提取支持范围内。
+[异步图片字节提取](../bug-fix/2026-10-08-fetch-image-bytes.md)替代同步结果限制；本笔记继续拥有无参数、自包含、无需第二次调用的入口约定。图片通过已完成结果中的 base64 字符串传递；网页 canvas 内容不在提取支持范围内。
 
 此选择替代[静态 widget](../feature/2026-09-30-static-ios-widget-artifacts.md)的命名提取入口；[运行时 data.json](../feature/2026-10-01-widget-runtime-data-json.md)的文件和 HTTP 流程继续适用。相关笔记的独立理由保持活跃并互相链接，没有归档或删除。
 
@@ -27,7 +27,7 @@ extra.js 是同步、立即执行并返回 JSON 对象的表达式，例如 `(()
 ## 验证
 
 - 浏览器测试通过：同一脚本在源页面直接执行两次均返回正确对象，预览捕获 DOM 得到一致结果，并经 data.json 正确呈现；零值、缺值和源脚本隔离保持有效。
-- 旧函数赋值、只有声明、Promise、JSON 字符串、undefined 字段、NaN、BigInt、DOM 节点和循环引用均有拒绝用例。
+- 旧函数赋值、只有声明、嵌套 Promise、JSON 字符串、undefined 字段、NaN、BigInt、DOM 节点和循环引用均有拒绝用例。
 - 类型检查、brief 测试、3 项 SDK 测试及 5 项 CLI 测试通过，文档与 Notes 门禁通过。
 - 真实模型生成的 small widget 经本地 Wrangler/Browser Run 验证成功；下载后的 extra.js 在源页面直接执行及重复执行均返回 `{"failures":0}`，与预览提取结果一致，HTML 的 data.json 渲染通过。
 - brief 按 o200k_base 计数由 1,459 增至 1,569 tokens，仅计本文，不包含 SDK、工具 schema 或图片上下文。

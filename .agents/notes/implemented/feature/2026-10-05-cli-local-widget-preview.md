@@ -10,7 +10,7 @@ Status: implemented
 
 `preview --out <目录> [--source <HTML>]` 是独立 CLI 命令，在服务端配置和 Client 初始化前分流，不依赖 WEBCLIP 环境变量。默认使用 capture.json 的 pageUrl 和 viewport 打开在线页面，显式 --source 则使用指定的本地文件；缺失时直接报错，不自动回退。默认来源和等待约定由[DOM 精简与原 URL 预览](2026-10-06-pruned-capture-live-url-preview.md)拥有。out 必须已有 extra.js、widget.html、meta.json，允许包含 data.json 和其他文件；输入路径相对于工作目录，输出不追加会话或轮次目录。用法与浏览器配置由[CLI 文档](../../../../docs/test-cli.md#本地预览-widget)拥有。
 
-源页面在独立、可见 Chrome/Chromium 中加载，正常执行网页脚本；在线入口使用捕获视口及 DPR 1，显式本地文件通过 file URL 加载。load 之后固定等待 5 秒，再直接求值 extra.js；没有选择器或等待时长参数。等待可中止。提取结果与 backend 使用同一 extractionExpression 校验，在浏览器中拒绝 Promise 和非 JSON 对象，避免自动等待 Promise 隐藏不合规返回值。backend 使用惰性捕获 DOM，CLI 使用实际加载后的 document，各自保留页面加载方式。
+源页面在独立、可见 Chrome/Chromium 中加载，正常执行网页脚本；在线入口使用捕获视口及 DPR 1，显式本地文件通过 file URL 加载。load 之后固定等待 5 秒，再直接求值 extra.js；没有选择器或等待时长参数。等待可中止。提取结果与 backend 使用同一 extractionExpression 校验，在浏览器中等待对象或 Promise 结果，拒绝超时、失败和非 JSON 对象；异步返回约定见[图片字节提取](../bug-fix/2026-10-08-fetch-image-bytes.md)。backend 使用惰性捕获 DOM，CLI 使用实际加载后的 document，各自保留页面加载方式。
 
 结果在 out 内暂存后重命名为 data.json，覆盖旧数据，其他产物保持不变。提取、校验或写入失败不覆盖原数据，也不启动结果服务。提取成功后关闭源页面，并启动仅监听 127.0.0.1、自动分配端口的静态 HTTP server，服务范围限定在 out。根请求打开 widget.html，禁止目录索引、路径穿越及符号链接越界，响应禁用缓存。
 
@@ -39,6 +39,8 @@ Chrome 辅助进程可能在主进程退出后继续持有继承的 stderr。启
 - 继承 stderr 用例让浏览器替身退出、后代保持管道打开，验证启动失败仍能完成进程清理并删除 profile。此前的挂起轮次和被终止轮次不计为通过。
 - 可见模式通过 `npm run test-cli -- preview` 使用实际生成的 small widget 实跑，HTTP data.json 返回 `{"failures":0}`；Ctrl-C 后该 HTTP 端口不再可访问。npm 包装命令在此次终端中断返回 1；直接 CLI 子进程的 SIGINT/SIGTERM 用例返回 0 并完成清理。
 - 类型检查、文档、Notes 与 diff 门禁通过。无模型调用或服务端部署要求。
+
+离线 `--snapshot` 使用 capture v2 的配对结构文件，不执行源脚本；HTML 文件 `--source` 仍按浏览器解析。结构等价与兼容边界由[实时 DOM 结构保真](../../implemented/bug-fix/2026-10-08-capture-live-dom-structure.md)拥有。
 
 ## 后果
 

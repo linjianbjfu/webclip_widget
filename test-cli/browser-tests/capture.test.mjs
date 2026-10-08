@@ -17,7 +17,7 @@ async function serverFixture(t,source=html){
 async function button(page,id){await page.evaluate(id=>document.querySelector('[data-webclip-ui]').shadowRoot.querySelector('#'+id).click(),id);}
 async function drag(page,id){const rect=await page.$eval(id,el=>{const r=el.getBoundingClientRect();return{x:r.x,y:r.y,width:r.width,height:r.height};});await page.mouse.move(rect.x+3,rect.y+3);await page.mouse.down();await page.mouse.move(rect.x+rect.width-3,rect.y+rect.height-3,{steps:5});await page.mouse.up();}
 
-test('repaired news card reaches preview and keeps live XPath in outgoing metadata',async t=>{
+test('nested news card reaches preview with unchanged live structure in capture v2',async t=>{
  const url=await serverFixture(t,`<!doctype html><html><head><style>article{margin:20px;width:600px;height:180px;background:#eef}</style></head><body><article id="card"></article><script>
  const outer=document.createElement('a');outer.href='/news';outer.innerHTML='<h2>新闻标题</h2><div class="author"></div>';
  const author=document.createElement('a');author.href='/author';author.textContent='作者';outer.querySelector('div').append(author);document.querySelector('#card').append(outer);
@@ -25,20 +25,16 @@ test('repaired news card reaches preview and keeps live XPath in outgoing metada
  let interaction;const reports=[];
  const result=await capturePage({url,select:true},{headless:true,report:message=>reports.push(message),onPage:page=>{
   interaction=(async()=>{
-   await page.evaluate(()=>{window.__webclipCapture.state.regions=[{id:'r1',el:document.querySelector('#card > a')}];});
+   await page.evaluate(()=>{window.__webclipCapture.state.regions=[{id:'r1',el:document.querySelector('#card > a')},{id:'r2',el:document.querySelector('a[href="/author"]')}];});
    await button(page,'finish');
-   await page.waitForFunction(()=>window.__webclipCapture.state.status==='selecting'&&document.querySelector('[data-webclip-ui]').shadowRoot.querySelector('#error').textContent,{polling:100});
-   const error=await page.evaluate(()=>document.querySelector('[data-webclip-ui]').shadowRoot.querySelector('#error').textContent);
-   assert.match(error,/r1.*拆分.*父区块/);assert.doesNotMatch(error,/pptr:|\n/);
-   await button(page,'clear');await drag(page,'#card');await drag(page,'a[href="/author"]');await button(page,'finish');
    await page.waitForFunction(()=>window.__webclipCapture.state.status==='preview',{polling:100});await button(page,'send');
   })();interaction.catch(()=>{void button(page,'cancel').catch(()=>{});});
  }});
  await interaction;assert.ok(result);t.after(()=>result.dispose());
  assert.equal(result.capture.regions.length,2);assert.equal(result.capture.images.length,1);
- assert.ok(result.capture.regions[1].sourceXPath);assert.notEqual(result.capture.regions[1].sourceXPath,result.capture.regions[1].xpath);
+ assert.equal(result.capture.version,2);assert.equal(result.capture.dom,'source.dom.json');assert.equal(result.capture.regions[1].sourceXPath,undefined);
  const source=await readFile(result.files[0],'utf8');assert.match(source,/新闻标题/);assert.match(source,/href="\/author"/);assert.doesNotMatch(source,/data-webclip-region-map/);
- assert.ok(reports.some(message=>message.includes('拆分')));assert.ok(reports.every(message=>!message.includes('pptr:')));
+ assert.ok(!reports.some(message=>message.includes('拆分')));assert.ok(reports.every(message=>!message.includes('pptr:')));
 });
 
 test('real region UI captures current DOM, montage and optional text without crossing frames/shadow',async t=>{
@@ -94,6 +90,6 @@ test('stale targets cannot submit and clearing/reselecting pure text sends no im
    await page.waitForFunction(()=>window.__webclipCapture.state.status==='preview',{polling:100});await button(page,'send');
   })();interaction.catch(()=>{void button(page,'cancel').catch(()=>{});});
  }});await interaction;assert.ok(result);t.after(()=>result.dispose());
- assert.equal(result.capture.mode,'regions');assert.equal(result.capture.regions.length,1);assert.deepEqual(result.capture.images,[]);assert.equal(result.files.length,1);
+ assert.equal(result.capture.mode,'regions');assert.equal(result.capture.regions.length,1);assert.deepEqual(result.capture.images,[]);assert.equal(result.files.length,2);
  assert.ok(result.capture.regions[0].text.includes('单行文本'));
 });

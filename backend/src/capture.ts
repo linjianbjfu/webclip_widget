@@ -10,7 +10,7 @@ export interface CaptureImage {
   mimeType: 'image/png' | 'image/jpeg'; bytes: number; role: 'montage' | 'full-page';
 }
 export interface Capture {
-  version: 1; mode: 'regions' | 'page'; source: 'source.html';
+  version: 1 | 2; dom?: 'source.dom.json'; mode: 'regions' | 'page'; source: 'source.html';
   requestUrl?: string; pageUrl?: string; baseUrl?: string;
   viewport: { width: number; height: number };
   regions: CaptureRegion[]; images: CaptureImage[];
@@ -39,7 +39,8 @@ function rectangle(value: unknown): Rect {
 export function parseCapture(value: unknown): Capture {
   if (new TextEncoder().encode(JSON.stringify(value)).length > CAPTURE_LIMITS.metadataBytes) throw new CaptureError('Capture metadata too large', 413);
   const c = object(value), v = object(c.viewport);
-  if (c.version !== 1 || !['regions', 'page'].includes(String(c.mode)) || c.source !== 'source.html') throw new CaptureError('Unsupported capture version, mode or source');
+  if ((c.version !== 1 && c.version !== 2) || !['regions', 'page'].includes(String(c.mode)) || c.source !== 'source.html') throw new CaptureError('Unsupported capture version, mode or source');
+  if (c.version === 2 ? c.dom !== 'source.dom.json' : c.dom !== undefined) throw new CaptureError('Invalid capture DOM companion');
   if (!Array.isArray(c.regions) || !Array.isArray(c.images) || c.regions.length > 8 || c.images.length > 1) throw new CaptureError('Capture allows at most 8 regions and one image');
   const images: CaptureImage[] = c.images.map(raw => {
     const i = object(raw);
@@ -72,7 +73,7 @@ export function parseCapture(value: unknown): Capture {
     const a = regions[i]?.imageRect, b = regions[j]?.imageRect;
     if (a && b && a.x < b.x+b.width && b.x < a.x+a.width && a.y < b.y+b.height && b.y < a.y+a.height) throw new CaptureError('Montage content rectangles overlap');
   }
-  const capture: Capture = { version: 1, mode: c.mode as Capture['mode'], source: 'source.html', viewport: { width: dimension(v.width), height: dimension(v.height) }, regions, images };
+  const capture: Capture = { version: c.version as 1 | 2, ...(c.version === 2 ? {dom: 'source.dom.json' as const} : {}), mode: c.mode as Capture['mode'], source: 'source.html', viewport: { width: dimension(v.width), height: dimension(v.height) }, regions, images };
   for (const name of ['requestUrl','pageUrl','baseUrl'] as const) if (c[name] !== undefined) {
     const url = string(c[name], 8192);
     try { if (!['http:','https:'].includes(new URL(url).protocol)) throw new Error(); } catch { throw new CaptureError('Capture URLs must use HTTP/HTTPS'); }

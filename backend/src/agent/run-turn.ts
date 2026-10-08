@@ -13,6 +13,7 @@
  */
 
 import { Buffer } from "node:buffer";
+import { applyCaptureInput } from './capture-source.ts';
 import { capturePrompt, ensureCaptureBudget } from "./capture-prompt.ts";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
@@ -67,7 +68,7 @@ export async function runTurn(input: RunTurnInput): Promise<void> {
 
   try {
     const input = store.turnInput(sessionId, turnId);
-    for (const file of input.files) await fs.writeFile(`/${file.name}`, file.data);
+    await applyCaptureInput(fs, input.files, input.capture);
     const text = capturePrompt(turn.prompt, input.capture);
     const images = (input.capture?.images ?? []).map(image => ({
       type: 'image' as const, mimeType: image.mimeType,

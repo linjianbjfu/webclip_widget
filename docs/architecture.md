@@ -45,6 +45,6 @@ turn 在 SSE 响应返回后继续执行。[alarm 策略](../backend/src/do/turn
 
 ## 区域与多模态输入
 
-[Capture 协议](protocol.md#capture区域与图片)关联当前 source.html、区域 XPath 和编号拼图。HTTP 接收器在冲突检查后原子保存本轮输入，执行器在初次运行或恢复时物化相同文件；不会把后续同名文件当成旧轮输入。Store 使用内容哈希和 512 KiB 分块保存不可变输入及消息图片，普通工作区文件仍由 WorkspaceFs 拥有。新增表通过 CREATE TABLE IF NOT EXISTS 接入已有数据库；session 删除清理相关输入和图片。
+[Capture 协议](protocol.md#capture区域与图片)关联当前 source.html、v2 配对结构快照、区域 XPath 和编号拼图。服务端预览按当前输入声明重建惰性 DOM；替换 HTML 会清理上一轮配对，v2 校验失败不会回退到 HTML 解析。HTTP 接收器在冲突检查后原子保存本轮输入，执行器在初次运行或恢复时物化相同文件；不会把后续同名文件当成旧轮输入。Store 使用内容哈希和 512 KiB 分块保存不可变输入及消息图片，普通工作区文件仍由 WorkspaceFs 拥有。新增表通过 CREATE TABLE IF NOT EXISTS 接入已有数据库；session 删除清理相关输入和图片。
 
 模型请求通过 SDK images 参数附图；图片持久化为引用，重建模型上下文时还原，HTTP entry 使用引用投影。首次调用、多轮及恢复各自保持本轮 capture 关联。来源 URL 仅用于说明和链接解析，server 不再次抓取原网站。

@@ -12,7 +12,7 @@ Status: implemented
 
 prompt 支持 --url 在线页面或唯一的 HTML --file，二者互斥；--select 打开浏览器多选。页面正常运行原脚本，在 load 后等待 3 秒进入框选，拖框吸附普通 DOM 区块，并提供父/子区块调整、删除、清空、浏览模式和拼图确认。取消不创建新 session 或发送 prompt。无 --select 的单一页面输入自动发送整页图；已有 preview 命令独立保留。
 
-区域最多 8 个。发送的是捕获时主文档 DOM 的 UTF-8 source.html 副本（有选区时精简，无选区时完整）、XPath 和文本、编号拼图及用户原始 prompt。工具节点从 HTML 和截图中排除，XPath 在规范化文档中验证唯一命中与内容保留；实时路径不同时另存 sourceXPath。解析修复的对应关系与拒绝条件见[捕获 XPath 校验](../bug-fix/2026-10-06-capture-xpath-parser-repair.md)。精简策略与正向路径保证见[DOM 精简与原 URL 预览](2026-10-06-pruned-capture-live-url-preview.md)。捕获前后保留 DOM、选区内容/区域位置不同会重采一次，持续变化时提示重选。预览确认发送的是已展示的捕获快照，不把等待用户确认期间页面的新状态混进去。
+区域最多 8 个。发送的是捕获时主文档 DOM 的 UTF-8 source.html 副本（有选区时精简，无选区时完整）、XPath 和文本、编号拼图及用户原始 prompt。工具节点从 HTML 和截图中排除，v2 以配对结构快照保留实时层级，XPath 唯一命中且选区树相等；新捕获不生成 sourceXPath，旧 v1 兼容保留。结构取舍见[实时 DOM 结构保真](../../implemented/bug-fix/2026-10-08-capture-live-dom-structure.md)，旧解析器限制见[捕获 XPath 校验](../bug-fix/2026-10-06-capture-xpath-parser-repair.md)。精简策略与正向路径保证见[DOM 精简与原 URL 预览](2026-10-06-pruned-capture-live-url-preview.md)。捕获前后保留 DOM、选区内容/区域位置不同会重采一次，持续变化时提示重选。预览确认发送的是已展示的捕获快照，不把等待用户确认期间页面的新状态混进去。
 
 本地源文件不修改。在线来源记录请求 URL、捕获时最终 URL 和 baseURI；server 不再次抓取页面。临时浏览器 profile 独立，用户可在浏览模式手动登录。整页导航后选择 UI 重新安装，旧目标不继承；脱离 DOM 的目标不能发送。
 
@@ -24,7 +24,7 @@ prompt 支持 --url 在线页面或唯一的 HTML --file，二者互斥；--sele
 
 默认 PNG，超过预算时尝试 JPEG 质量 0.9，仍超过每轮 2 MiB 则提示调整，不丢区块。为限制本机原始截图资源，完整页面最多 8000 万像素、宽 20000、高 100000 CSS px；超限要求框选，单个区域也受 8000 万像素上限约束。缩放发生在截图后，不改变源页面 viewport 的响应式布局。
 
-capture v1 的区域编号、XPath、rect、text 与 imageRect 关联同一拼图。server 验证数量、字段、图块边界和重叠，再用 fast-png/jpeg-js 真正解码检查 MIME、实际尺寸和字节数。使用纯 JavaScript PNG 解码器是因为 pngjs 同步解码依赖的 Node zlib 内部实现不能在当前 Workers 环境正确执行。完整线上格式和限额由[协议](../../../../docs/protocol.md#capture区域与图片)拥有。
+capture 的区域编号、XPath、rect、text 与 imageRect 关联同一拼图。server 验证数量、字段、图块边界和重叠，再用 fast-png/jpeg-js 真正解码检查 MIME、实际尺寸和字节数。使用纯 JavaScript PNG 解码器是因为 pngjs 同步解码依赖的 Node zlib 内部实现不能在当前 Workers 环境正确执行。完整线上格式和限额由[协议](../../../../docs/protocol.md#capture区域与图片)拥有。
 
 ### 模型和存储
 

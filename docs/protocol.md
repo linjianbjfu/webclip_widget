@@ -110,13 +110,14 @@ GET /v1/sessions/{id}/events?since=41
 
 ### Capture：区域与图片
 
-multipart 的可选文本字段 `capture` 是 JSON，version 为 1。主来源固定为本次上传的 `source.html`，内容是捕获时的主页面 DOM；原始请求 text 单独保留。
+multipart 的可选文本字段 `capture` 是 JSON，新捕获使用 version 2，仍接受旧 version 1。主来源固定为本次上传的 `source.html`，v2 必须同时上传 `dom: "source.dom.json"` 指定的结构快照。原始请求 text 单独保留。
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "mode": "regions",
   "source": "source.html",
+  "dom": "source.dom.json",
   "requestUrl": "https://example.com/quote",
   "pageUrl": "https://example.com/quote",
   "baseUrl": "https://example.com/quote",
@@ -132,13 +133,23 @@ multipart 的可选文本字段 `capture` 是 JSON，version 为 1。主来源�
 
 示例中的 bytes 必须替换为实际图片字节数。区域 rect 是主文档 CSS px；imageRect 是拼图中对应内容块的像素范围，不含编号栏。`imageId` 与 `imageRect` 必须同时出现或同时省略。仅文本区域保留非空 text 与 XPath；regions 模式最多 8 个区域，可没有图片，或者共享唯一一张 montage 图片。imageRect 必须在图片内且各区域内容块不重叠。page 模式 regions 为空，必须有一张 full-page 图片。
 
-区域 `xpath` 定位上传的 source.html。CLI 对捕获 HTML 做解析器规范化；若实时网页路径与捕获路径不同，可选 `sourceXPath` 记录实时路径，路径相同时省略。两者均为非空字符串，各最多 4096 字符。新 CLI 使用正向绝对元素路径，不用 id 快捷路径；裁剪前后的 xpath 必须保持有效。模型用 xpath 检查捕获数据，用 sourceXPath（如有）定位实时 DOM，并校验选区字段。旧请求仍接受原有 XPath 字符串，无需新增字段。
+区域 `xpath` 定位捕获时的实时 DOM 与 v2 结构快照，使用正向绝对元素路径，不用 id 快捷路径；裁剪前后必须唯一命中同一区域。v2 不通过 HTML 解析器修复结构，不生成 sourceXPath。v1 兼容可选 `sourceXPath`：xpath 定位旧捕获 HTML，sourceXPath 指向不同的实时路径；两者均为非空字符串，各最多 4096 字符。旧 HTML 无法逆推出实时结构，需要重新捕获才能获得 v2 保证。
+
+`source.html` 是裁剪后 DOM 的 UTF-8 直接序列化，供模型阅读；用浏览器打开或重新解析它仍可能增加 tbody、拆分嵌套链接。原有 charset 属性保留，不补元素或改属性。结构依据是 `source.dom.json`，格式如下：
+
+```json
+{"version":1,"sourceSha256":"<source.html UTF-8 字节的 SHA-256 小写十六进制>","root":[1,0,"html",[],[[1,0,"head",[],[]],[1,0,"body",[],[[3,"正文"]]]]]}
+```
+
+节点编码为 `[1, namespace, qualifiedName, attributes, children]`；属性为 `[namespace, qualifiedName, value]`。HTML template 另有第六项 content 子节点数组。文本为 `[3, text]`，注释为 `[8, text]`。namespace 的 0/1/2 分别代表 XHTML/SVG/MathML，其他命名空间用 URI 字符串，无命名空间用 null。根必须为 XHTML html；仅允许这些节点类型，保留属性与子节点顺序。结构文件格式 version 独立于 capture version。未知版本、非法节点/属性、重复属性、无法无损重建、缺失配对或 hash 不匹配都拒绝，不降级到 HTML 解析。
+
+两份文件各最多 16 MiB，结构最多 200000 节点、根深度为 0 时最大深度 512；全部附件解压后合计仍最多 24 MiB。CLI 上传前检查体积，超限需缩小选区或减少附件。source.dom.json 只能随 capture v2 上传；`capture-source.json` 为工作区内部来源声明，禁止同名上传。替换 source.html 时清理旧配对与声明；纯文字后续轮保留当前来源。模型默认只读 source.html，不读取或修改工具拥有的结构文件和来源声明。
 
 regions 模式的 source.html 可清空非选区文本/脚本/CSS 正文并删除后方无关分支，同时保留选区内容、祖先及前方元素结构和属性。精简不能改变原正向路径，但会改变全局匹配数量或倒序位置；模型不能据此推断 id 全局唯一性、last() 或 last-child。page 模式保留整页内容。
 
 图片格式限定 PNG/JPEG，二进制内容作为同名 file 部分上传。server 解码验证实际格式与尺寸，不能仅修改 MIME/扩展名绕过校验。拼图宽高最多 1200px，整页图最多 768px，每轮图片最多 2 MiB；capture JSON 最多 64 KiB，每个区域 text 最多 4000 字符。非法结构、重复文件或引用缺失返回 400，尺寸/字节超限返回 413。
 
-source.html 与图片作为不可变的本轮输入持久化；同名后续上传不改变旧输入。只有 capture 声明的图片自动进入本轮模型消息，未声明的普通附件不作为图片自动附加。纯文本选区不会补发整页图。系统 brief 保持稳定，动态 XPath、编号和图片说明放在 user 消息。
+source.html、v2 结构文件与图片作为不可变的本轮输入持久化；同名后续上传不改变旧输入。只有 capture 声明的图片自动进入本轮模型消息，未声明的普通附件不作为图片自动附加。纯文本选区不会补发整页图。系统 brief 保持稳定，动态 XPath、编号和图片说明放在 user 消息。
 
 接近上下文上限时会先尝试压缩历史，仍不足则以失败 turn 和 `context_budget_exceeded` 诊断返回。预算包含本轮新增文字/图片与输出余量；图片 token 是保守估计，不能代替上游实际计数。
 
@@ -164,13 +175,13 @@ widget 构建的交付文件为 `out/extra.js`、`out/widget.html`、`out/meta.j
 
 尺寸由 [widget-contract.ts](../backend/src/widget-contract.ts) 定义，是项目预览基准。HTML 自适应客户端实际 viewport；客户端选择对应的 iOS widget family，设置 WebView 画布与截图缩放倍率。`#widget-root` 从 `(0, 0)` 铺满画布，不靠滚动展示内容，也不以三档基准值硬编码根宽高。
 
-`extra.js` 是可直接执行的同步脚本，整个文件采用立即执行函数表达式（IIFE），例如 `(() => { /* 从 document 提取 */ return data; })()`。客户端执行整份脚本后直接得到 JSON 对象，不需要先注册函数、传参或再调用命名函数。返回对象本身，不返回 JSON 字符串、Promise、函数或 DOM 节点；内部字段只使用 JSON 值，缺值用 null，保留数值零。
+`extra.js` 是可直接执行的自包含脚本，整个文件采用同步或异步立即执行函数表达式（IIFE），例如 `(async () => { /* 从 document 提取，await 图片 */ return data; })()`。客户端执行整份脚本并等待结果，最长 15 秒，再将普通 JSON 对象序列化为 data.json；不能直接序列化未完成的 Promise。不需要注册函数、传参或再次调用命名函数。拒绝、超时、JSON 字符串、函数、DOM 节点及非普通对象均为提取失败；内部字段只使用 JSON 值，不能含 Promise，缺值用 null，保留数值零。同步脚本继续兼容。WebView 宿主需使用能等待 JavaScript Promise 的执行方式；本仓库的服务端预览和 CLI 实现这一等待流程，iOS 宿主需同步适配。
 
-脚本直接读取源网页的 `document`，变量留在 IIFE 内，可重复执行。它不修改网页、不发网络请求、不执行捕获 HTML 中的脚本，也不负责写文件；客户端将执行结果序列化为 data.json。
+脚本直接读取源网页的 `document`，变量留在 IIFE 内，可重复执行。它不修改网页、不执行捕获 HTML 中的脚本，也不负责写文件。网络请求仅限选中的 img 的图片 URL；捕获 DOM 预览不联网。
 
-模型可自主选择区域内适合 widget 构图的图片。extra.js 可将已有 PNG/JPEG/WebP base64 data URI，或已加载且像素可读的 img 转成静态图片 data URI，随业务记录写入返回对象；图片字段不可用时为 null，字段名由当前 bundle 约定。转换允许创建未挂载的临时 canvas、读取图片固有尺寸并编码，不读取网页 canvas、不修改原 img、不发起图片请求。模型获得的提取示例限制每次最多 3 张、每 URI 180,000 字符、合计 360,000 字符（均含前缀）；转换的图片最长边不超过 512px且不放大。已有 data URI 受字符预算限制。超限不截断编码，图片读取或转换失败时省略该可选图片。
+模型可自主选择区域内适合 widget 构图的图片。extra.js 优先复用已有 PNG/JPEG/WebP base64 data URI；HTTP(S) 图片使用 `currentSrc || src`，以 `fetch(url, { mode: 'cors', credentials: 'omit', cache: 'force-cache' })` 取得原始字节，检查 HTTP 状态、MIME 与文件头，再编码为 base64。预算内保留原图字节，不直接返回 URL。每次最多处理 3 张图片，每个请求最多 3 秒、响应体最多 2 MiB；每 URI 180,000 字符、合计 360,000 字符（均含前缀）。可读原图超出字符预算时，可经临时 canvas 缩到最长边 512px 且不放大，PNG 仍超限时尝试 WebP 压缩；已有 data URI 超限则省略，不截断编码。fetch 失败可尝试已加载且像素可读的 img，仍失败则将该图片字段设为 null，文本提取继续。字段名由 bundle 约定，图片随对应业务记录传递。不读取网页 canvas、不修改原 img。
 
-网页能显示跨域图片不意味着脚本能读取像素；无 CORS 授权时 canvas 导出可能失败，不保证所有原图都可提取。widget 不使用图片 URL 兜底，以免在新来源下触发防盗链。核心信息只存在于网页 canvas 且没有 DOM 表示时，允许明确生成失败；存在无关 canvas 不影响可提取的 DOM 内容。
+网页能显示跨域图片不意味着 canvas 可读；普通模式加载的 img 可能污染 canvas，而单独 CORS fetch 仍可取得字节。fetch 仍受 CORS、CSP、防盗链与格式限制，不保证所有原图可提取。widget 不使用图片 URL 兜底，以免在新来源下触发防盗链。核心信息只存在于网页 canvas 且没有 DOM 表示时，允许明确生成失败；存在无关 canvas 不影响可提取的 DOM 内容。
 
 `widget.html` 使用内嵌 CSS 和 JS，定义同步函数 `window.renderWidget(data)`。每次调用替换当前内容；数据结构由同一 bundle 的提取和渲染脚本共同约定。页面每次加载时通过 `fetch('./data.json', { cache: 'no-store' })` 获取同目录数据，检查 HTTP 状态、解析 JSON 后渲染。HTML 不内嵌捕获数据或使用写死的数值兜底；源文本作为文本写入 DOM，widget 页面不加载 `extra.js`。
 
@@ -182,7 +193,7 @@ HTML 在同步初始化时公开 `window.widgetReady` Promise，只有数据请�
 
 业务图片从 data.json 读取，不能固定为捕获时的图片常量。renderer 校验栅格图片 data URI，在设置 src 前注册失败处理；坏图移除或隐藏后保留可读文字。重复渲染替换旧图片。浏览器与 CLI 等待可见图片解码；仍可见的解码失败图片使预览失败，已移除或隐藏的可选图片可降级。默认视觉规范及扩展方式见 [Design System](design-system.md)。
 
-`preview_widget` 在独立浏览器页面中用 DOMParser 解析 `/source.html`，将捕获文档绑定为 document，直接求值整份 extra.js 并读取完成值，将结果作为同源 `/data.json` 的 HTTP 响应。预览按 metadata 设置画布，等待 widgetReady（最多 15 秒），要求实际发生数据请求，再检查数据渲染一致性、重复渲染、根边界、溢出和可检测的动画声明。截图保留页面实际加载后的状态，后续诊断调用不能替页面补好截图。完整提取 JSON 写到工作区 `/widget-preview-data.json` 供模型检查字段，该临时文件不交付。单次预览不能穷尽任意 JS 定时行为或动图，也不能证明每个字段都来自正确的源区域；Chromium 结果不能替代 WKWebView 真机验证。
+`preview_widget` 对 v2 校验 HTML/结构文件配对，用 DOM 创建 API 重建无 browsing context 的文档，不执行源脚本或加载源资源。v1 和普通 HTML 使用 DOMParser，结果标明 legacy、实时结构未验证。它将捕获文档绑定为 document，直接求值整份 extra.js 并读取完成值，将结果作为同源 `/data.json` 的 HTTP 响应。预览按 metadata 设置画布，等待 widgetReady（最多 15 秒），要求实际发生数据请求，再检查数据渲染一致性、重复渲染、根边界、溢出和可检测的动画声明。截图保留页面实际加载后的状态，后续诊断调用不能替页面补好截图。完整提取 JSON 写到工作区 `/widget-preview-data.json` 供模型检查字段，该临时文件不交付。单次预览不能穷尽任意 JS 定时行为或动图，也不能证明每个字段都来自正确的源区域；Chromium 结果不能替代 WKWebView 真机验证。
 
 捕获文档不会加载远程图片，离线预览可验证已有 data URI 和缺图布局，但不能证明在线 img 转 base64 成功；该路径需在原网页预览验证。模型检查提取 JSON 时读取所需字段，避免把大段 base64 输出进上下文。
 

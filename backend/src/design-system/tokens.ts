@@ -31,8 +31,8 @@ export const TOKENS: Static<typeof TOKENS_SCHEMA> = {
     dark: { surface: "#242628", primary: "#F7F8FA", secondary: "#B7BBC1", divider: "#494D52", accent: "#8AB4FF" },
   },
   sizes: {
-    small: { padding: 12, gap: 8, hero: 40, title: 17, body: 13, caption: 11 },
-    middle: { padding: 16, gap: 12, hero: 36, title: 18, body: 14, caption: 11 },
-    large: { padding: 20, gap: 12, hero: 42, title: 20, body: 14, caption: 12 },
+    small: { padding: 12, gap: 8, hero: 40, title: 17, body: 14, caption: 12 },
+    middle: { padding: 16, gap: 12, hero: 36, title: 18, body: 15, caption: 12 },
+    large: { padding: 20, gap: 12, hero: 42, title: 20, body: 15, caption: 12 },
   },
 };
