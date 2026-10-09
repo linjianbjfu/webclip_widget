@@ -85,7 +85,7 @@ export async function capturePage(options, { headless = false, signal, onPage, r
     owned=await launchBrowser({headless,signal:stop.signal});
     owned.browser.on('disconnected',cancel);
     const page=await owned.browser.newPage(); page.on('close',cancel);
-    await page.setViewport({width:1280,height:900,deviceScaleFactor:1});
+    if(headless)await page.setViewport({width:1280,height:900,deviceScaleFactor:1});
     await bounded(page.goto(source.url,{waitUntil:'load',timeout:30_000}),{signal:stop.signal,label:'Source loading'});
     await delay(3000,undefined,{signal:stop.signal});
     await page.evaluate(installSelectionUI);

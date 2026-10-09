@@ -7,7 +7,7 @@ import {capturePage} from '../capture-page.mjs';
 import {launchBrowser,bounded} from '../browser.mjs';
 import {composeCaptureImage} from '../capture-images.mjs';
 
-const html=`<!doctype html><html><head><style>body{margin:0;font:20px sans-serif}section{width:600px;height:180px;margin:20px;background:#eef}#tiny{margin:20px;font:16px sans-serif;height:24px}canvas{width:300px;height:100px}</style></head><body>
+const html=`<!doctype html><html><head><style>body{margin:0;padding-left:380px;font:20px sans-serif}section{width:600px;height:180px;margin:20px;background:#eef}#tiny{margin:20px;font:16px sans-serif;height:24px}canvas{width:300px;height:100px}</style></head><body>
 <section id="quote"><h2>微软股价</h2><p>价格 <span id="price">0</span></p></section><section id="chart"><h2>趋势区域</h2><canvas id="canvas" width="300" height="100"></canvas></section><p id="tiny">单行文本 0</p><iframe id="frame" srcdoc="<p>frame</p>"></iframe><div id="shadow"></div>
 <script>document.querySelector('#price').textContent='420';document.querySelector('#canvas').getContext('2d').fillRect(10,10,60,60);document.querySelector('#shadow').attachShadow({mode:'open'}).innerHTML='<p>shadow content</p>';</script></body></html>`;
 async function serverFixture(t,source=html){

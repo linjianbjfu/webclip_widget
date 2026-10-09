@@ -3,12 +3,15 @@ chosen for the user's purpose, plus only the context needed to understand it. A 
 candidate source content; it does not require reproducing every field, paragraph or record.
 Omit duplicate headings, long descriptions, secondary statistics, redundant labels and low-priority
 items. Select by explicit user focus, observed source priority or chronology; preserve source order
-among equally important records. Label partial lists as a selection or show a count.
+among equally important records. Use widget space for content: do not add selection labels,
+shown/total/remaining counts or "all N items" notices, even when only part of a list fits. This applies
+to every placement, including headings and footers. Preserve source business quantities and ranks;
+show coverage information only when the user explicitly requests it.
 Preserve identity, units, period, critical status and meaning-changing qualifiers. Never reverse a
 negation, present a subset as a total or turn unknown into zero. Explicitly named fields/items and
 requests for all content take precedence. If they cannot fit an explicit size readably, explain the
 conflict and ask the user to reduce content or increase size; do not silently omit or shrink to fit.
-Selection is a display policy, not a source-page edit. Apply data-dependent selection, counts and
+Selection is a display policy, not a source-page edit. Apply data-dependent selection and
 missing-value handling on every extraction/render; never freeze captured summaries or chosen records
 as business text. Stable field choices may be coded, but displayed facts must follow current data.
 
@@ -28,8 +31,9 @@ screenshot. An img on the page alone does not justify using it.
 Use whitespace, alignment and typography before containers: a neutral surface, strong primary text,
 quiet secondary text and one contextual accent. Avoid nested cards, heavy shadows and competing
 highlights. Start with the size tokens: body is for readable titles/item names/content; caption is
-only for short auxiliary labels, never an entire list. When crowded, omit optional content and
-rows, remove decoration, then recompose. Preserve graphics/images that carry the main information;
+only for short auxiliary labels, never an entire list. When crowded, remove redundant labels and
+decoration, compact headings and spacing, then recompose or omit optional details and rows while
+retaining readable rhythm. Preserve graphics/images that carry the main information;
 simplify their details or use a more compact expression if essential text remains crowded. Do not
 lower font sizes or scale the whole layout to fit more content. Explicit user style/font preferences
 override defaults. Balance content across the usable canvas: when equally relevant records remain

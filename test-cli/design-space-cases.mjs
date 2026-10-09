@@ -6,9 +6,9 @@ import {startPreviewServer} from './preview-server.mjs';
 import {renderWidgetPreview} from '../backend/src/agent/preview-render.ts';
 
 export const spaceTitles=[
- '港股大模型双雄走弱，MINIMAX-W大跌','煤化工景气回暖，广汇能源业绩大增',
+ 'OpenAI营收预期差200亿，AI板块巨震','煤化工景气回暖，广汇能源业绩大增',
  '银行股逆势走强，工行中行同创新高','玻璃基板概念走弱，沃格光电大跌',
- '航运股走强，招商轮船涨停','CPO概念大跌，长光华芯触及跌停',
+ '港股大模型双雄走弱，MINIMAX-W大跌','CPO概念大跌，长光华芯触及跌停',
  '农业板块活跃，金健米业逼近涨停','深物业A涨停，房地产板块拉升',
  '固态电池板块走强，传艺科技拉升','PCB概念活跃，世名科技涨停',
 ];
@@ -38,7 +38,13 @@ export function measureList(titles){
  return {records,text:root.innerText,bottom:bounds.bottom-parseFloat(style.paddingBottom)};
 }
 
-export function assertListCapacity(measured,{titles,min=1,max=titles.length,fill=false,total=titles.length}){
+/** Known list fixtures have no coverage facts; remove their source text before checking generated labels. */
+export function assertNoListCoverage(text,sourceTexts=[]){
+ for(const source of [...sourceTexts].sort((a,b)=>b.length-a.length))text=text.replaceAll(source,'');
+ assert.doesNotMatch(text,/精选|节选|选摘|选取|仅显示|仅展示|(?:展示|显示|前|全部|共|剩余|还有|更多)\s*[一二三四五六七八九十百\d]+\s*(?:条|项|篇)|\d+\s*[／/]\s*\d+|\b(?:showing|selected|remaining|all\s+\d+|\d+\s+of\s+\d+)\b/i,'unsolicited list coverage notice');
+}
+
+export function assertListCapacity(measured,{titles,min=1,max=titles.length,fill=false}){
  const {records}=measured;
  assert.ok(records.length>=min&&records.length<=max,`expected ${min}–${max} complete titles, got ${records.length}`);
  assert.deepEqual(records.map(row=>row.title),titles.slice(0,records.length),'selection must retain the source prefix');
@@ -48,16 +54,13 @@ export function assertListCapacity(measured,{titles,min=1,max=titles.length,fill
   const nextRow=Math.min(...steps,last.lineHeight+12);
   assert.ok(measured.bottom-last.bottom<nextRow+2,`unused bottom ${measured.bottom-last.bottom}px can fit another row (${nextRow}px)`);
  }
- if(records.length<total){
-  assert.match(measured.text,new RegExp(`(?:共\\s*${total}|[／/]\\s*${total}|${total}\\s*条)`),'missing source total');
-  assert.match(measured.text,new RegExp(`(?:前|显示|展示|精选|节选|选取)\\s*${records.length}|${records.length}\\s*(?:条|[／/])`),'missing actual shown count');
- }
+ assertNoListCoverage(measured.text,titles);
 }
 
 export async function verifySpaceList(browser,{item,source,html,extra,out}){
  const longer=spaceTitles.map(title=>title+'，相关企业发布最新经营公告与后续市场动态');
- const variants=item.explicitCount?[{id:'base',titles:spaceTitles,min:5,max:5,total:5}]:[
-  {id:'base',titles:spaceTitles,min:7,fill:true},
+ const variants=item.explicitCount?[{id:'base',titles:spaceTitles,min:5,max:5}]:[
+  {id:'base',titles:spaceTitles,min:10,fill:true},
   {id:'longer',titles:longer,min:1},
   {id:'short',titles:spaceTitles.slice(0,2),min:2,max:2},
   {id:'empty',titles:[],min:0,max:0},

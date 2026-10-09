@@ -8,7 +8,7 @@ function selectionUI({encodeDom, decodeDom}) {
   const root = host.attachShadow({mode:'open'});
   root.innerHTML = `<style>
     :host{all:initial}*{box-sizing:border-box;font-family:system-ui,sans-serif}
-    #panel{position:fixed;right:16px;bottom:16px;width:340px;max-height:70vh;overflow:auto;background:#fff;color:#17202a;padding:16px;border:1px solid #abb4c0;border-radius:12px;box-shadow:0 4px 24px #0004;z-index:2147483647;font-size:13px}
+    #panel{position:fixed;left:16px;top:16px;width:340px;max-width:calc(100vw - 32px);max-height:70vh;overflow:auto;background:#fff;color:#17202a;padding:16px;border:1px solid #abb4c0;border-radius:12px;box-shadow:0 4px 24px #0004;z-index:2147483647;font-size:13px}
     button{border:1px solid #b5bdc8;border-radius:6px;padding:7px;margin:3px;background:#f5f7fa;color:#17202a;cursor:pointer}button.primary{background:#185abc;color:white;border-color:#185abc}h3{margin:0 0 8px}p{margin:6px 0;line-height:1.4}
     .row{border-top:1px solid #ddd;padding:7px 0}.box{position:fixed;border:2px solid #185abc;background:#185abc16;pointer-events:none;z-index:2147483646}.tag{background:#185abc;color:white;padding:2px 5px;font-size:12px}
     #preview{max-width:100%;max-height:36vh;object-fit:contain}#error{color:#a11;white-space:pre-wrap}

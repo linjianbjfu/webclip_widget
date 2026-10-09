@@ -6,7 +6,7 @@ import {Client} from './client.mjs';
 import {saveArtifacts} from './artifacts.mjs';
 import {launchBrowser} from './browser.mjs';
 import {composeCaptureImage} from './capture-images.mjs';
-import {spaceCases, verifySpaceList} from './design-space-cases.mjs';
+import {spaceCases, verifySpaceList, assertNoListCoverage} from './design-space-cases.mjs';
 import {imageCases, prepareDesignImages, verifyDesignImages} from './design-image-cases.mjs';
 import {renderWidgetPreview} from '../backend/src/agent/preview-render.ts';
 import {extractionExpression} from '../backend/src/agent/extraction.ts';
@@ -123,7 +123,7 @@ try {
         if(item.id==='long-list'){
           const shown=longTitles.filter(title=>rendered.text.includes(title));
           assert.ok(shown.length>0&&shown.length<longTitles.length,'list must show identifiable selected records');
-          assert.match(rendered.text,/精选|节选|选摘|条中|共|更多|其余|剩余|前\s*[一二三四五六七八\d]|\d+\s*\/\s*\d+/,'partial list needs a visible coverage cue');
+          assertNoListCoverage(rendered.text,longTitles);
           assert.ok(rendered.text.includes(longTitles[0]),'selection must follow observed chronology');
         }
         if(item.id==='paragraphs'){
@@ -137,6 +137,7 @@ try {
           await writeFile(join(out,`${variant.id}.json`),JSON.stringify({source:changed,...rerender,screenshotBase64:undefined},null,2));
           assert.deepEqual(rerender.errors,[],`${item.id}/${variant.id}`);
           assert.notEqual(rerender.extractedData,rendered.extractedData,`${variant.id}: captured data was frozen`);
+          if(item.id==='long-list')assertNoListCoverage(rerender.text,[...longTitles,'今晨社区食堂开放早餐预约服务','明日书屋开放']);
           if(variant.present)assert.match(rerender.text,variant.present);
           if(variant.absent)assert.doesNotMatch(rerender.text,variant.absent);
           if(variant.id==='empty')assert.match(rerender.text,/暂无|无数据|不可用|未找到|未提供|缺|—|--/,'empty source must remain honest');
