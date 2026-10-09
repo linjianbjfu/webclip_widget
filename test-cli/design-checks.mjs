@@ -7,6 +7,7 @@ import {saveArtifacts} from './artifacts.mjs';
 import {launchBrowser} from './browser.mjs';
 import {composeCaptureImage} from './capture-images.mjs';
 import {spaceCases, verifySpaceList, assertNoListCoverage} from './design-space-cases.mjs';
+import {styleCases, verifyStyle} from './design-style-cases.mjs';
 import {imageCases, prepareDesignImages, verifyDesignImages} from './design-image-cases.mjs';
 import {renderWidgetPreview} from '../backend/src/agent/preview-render.ts';
 import {extractionExpression} from '../backend/src/agent/extraction.ts';
@@ -32,6 +33,7 @@ const listBody = titles => '<h1>社区资讯</h1><p>按发布时间从新到旧<
 const textBody = (status='尚未开放', details=true) => `<h1>北岸步道公告</h1><p id="lead">最新状态：北岸步道${status}；仅南入口通行；截至 10 月 8 日；请勿进入施工区。</p>${details ? Array.from({length:7},(_,i)=>`<section><h2>背景资料 ${i+1}</h2><p>施工背景第${i+1}节：本项目开展沿岸设施维护、步道路面检查和绿化养护，施工团队将依次完成测量、备料和现场复核。历史记录仅供了解项目，不代表当前通行状态。</p></section>`).join('') : ''}`;
 const emptyBody = '<h1>暂无数据</h1>';
 const cases=[
+  ...styleCases,
   ...imageCases,
   ...spaceCases,
   {id:'small',size:'small',text:'用小号 widget 显示本月故障数。',body:'<h1>设备运行</h1><p>本月故障数 <b id="value">0</b></p><canvas></canvas>'},
@@ -80,7 +82,7 @@ try {
     const created=await client.createSession('Design check '+item.id);assert.equal(created.status,201);
     const sessionId=created.body.sessionId;
     try {
-      for(const [turn,text] of [item.text,...(item.followup?[item.followup]:[])].entries()){
+      for(const [turn,text] of [item.text,...(item.followups??(item.followup?[item.followup]:[]))].entries()){
         const started=Date.now();console.log(`START ${item.id} turn ${turn+1}`);
         const result=await client.prompt({sessionId,text,...(turn===0?{files:[join(folder,'source.html'),join(folder,imageFile)],capture}:{}),onFrame:frame=>{if(frame.event==='tool_end')console.log(`  ${item.id}: ${frame.data.name} ${frame.data.isError?'error':'ok'}`);}});
         await writeFile(join(folder,`turn-${turn+1}.json`),JSON.stringify(result));
@@ -114,7 +116,8 @@ try {
         await writeFile(join(out,'data.json'),rendered.extractedData);
         await writeFile(join(out,'text.txt'),rendered.text);
         if(item.space)await verifySpaceList(owned.browser,{item,source,html,extra,out});
-        if(item.artwork)await verifyDesignImages(owned.browser,{item,source,html,extra,rendered,out});
+        if(item.style)await verifyStyle(owned.browser,{item,out,turn});
+        if(item.artwork&&!(item.style==='image'&&turn===2))await verifyDesignImages(owned.browser,{item,source,html,extra,rendered,out});
         if(item.id==='dense-metrics'){
           assert.match(rendered.text,/18/);assert.match(rendered.text,/未恢复/);assert.match(rendered.text,/户/);assert.match(rendered.text,/东区/);
           assert.match(rendered.text,/09:30/);assert.match(rendered.text,/不含计划停水/);

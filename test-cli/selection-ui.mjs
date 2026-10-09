@@ -1,7 +1,7 @@
 import { DOM_CODEC } from '../backend/src/dom-snapshot.ts';
 
 /** Runs in the source page; tool nodes are removable without editing selected elements. */
-function selectionUI({encodeDom, decodeDom}) {
+function selectionUI({encodeDom, decodeDom, domRead}) {
   if (window.__webclipCapture) return;
   const host = document.createElement('div'); host.dataset.webclipUi = 'true';
   document.documentElement.append(host);
@@ -81,10 +81,11 @@ function selectionUI({encodeDom, decodeDom}) {
     const literal = value => !value.includes("'") ? `'${value}'` : !value.includes('"') ? `"${value}"` : `concat(${value.split("'").map(part=>`'${part}'`).join(`,"'",`)})`;
     const xpath = el => {
       const parts=[];
-      for(let node=el;node;node=node.parentElement){
+      for(let node=el;node;node=domRead.parentElement(node)){
         let index=1;
-        for(let sib=node.previousElementSibling;sib;sib=sib.previousElementSibling)if(sib.localName===node.localName&&sib.namespaceURI===node.namespaceURI)index++;
-        const name=node.namespaceURI==='http://www.w3.org/1999/xhtml' ? node.localName : `*[local-name()=${literal(node.localName)} and namespace-uri()=${literal(node.namespaceURI??'')}]`;
+        const local=domRead.localName(node),ns=domRead.namespaceURI(node);
+        for(let sib=domRead.previousElementSibling(node);sib;sib=domRead.previousElementSibling(sib))if(domRead.localName(sib)===local&&domRead.namespaceURI(sib)===ns)index++;
+        const name=ns==='http://www.w3.org/1999/xhtml' ? local : `*[local-name()=${literal(local)} and namespace-uri()=${literal(ns??'')}]`;
         parts.unshift(`${name}[${index}]`);
       }
       return '/'+parts.join('/');
@@ -95,33 +96,33 @@ function selectionUI({encodeDom, decodeDom}) {
       const path=xpath(item.el), fail=message=>{throw Error(`${item.id} (${path})：${message}`);};
       // Child indices map to the untouched clone, before UI removal.
       const indices=[];
-      for(let node=item.el;node!==document.documentElement;node=node.parentNode)indices.unshift([...node.parentNode.childNodes].indexOf(node));
+      for(let node=item.el;node!==document.documentElement;node=domRead.parentNode(node))indices.unshift([...domRead.childNodes(domRead.parentNode(node))].indexOf(node));
       let target=clone;
-      for(const index of indices)target=target.childNodes[index];
+      for(const index of indices)target=domRead.childNodes(target)[index];
       return {item,path,fail,target};
     });
     clone.querySelectorAll('[data-webclip-ui]').forEach(n=>n.remove());
     const mapped=selected;
     if(mapped.length){
       const roots=new Set(mapped.map(region=>region.target)), branches=new Set();
-      for(const root of roots)for(let node=root;node;node=node.parentElement)branches.add(node);
+      for(const root of roots)for(let node=root;node;node=domRead.parentElement(node))branches.add(node);
       const clearText = root => {
         const pending=[root];
         while(pending.length){
           const node=pending.pop();
-          for(const child of [...node.childNodes]){
-            if(child.nodeType===Node.TEXT_NODE||child.nodeType===Node.COMMENT_NODE)child.remove();
+          for(const child of [...domRead.childNodes(node)]){
+            if(domRead.nodeType(child)===Node.TEXT_NODE||domRead.nodeType(child)===Node.COMMENT_NODE)child.remove();
             else pending.push(child);
           }
-          if(node.localName==='template'&&node.content)pending.push(node.content);
+          if(domRead.nodeType(node)===Node.ELEMENT_NODE&&domRead.namespaceURI(node)==='http://www.w3.org/1999/xhtml'&&domRead.localName(node)==='template')pending.push(domRead.content(node));
         }
       };
       const prune = node => {
         if(roots.has(node))return;
-        const children=[...node.childNodes];
+        const children=[...domRead.childNodes(node)];
         const last=children.findLastIndex(child=>branches.has(child));
         for(const [index,child] of children.entries()){
-          if(index>last||child.nodeType!==Node.ELEMENT_NODE)child.remove();
+          if(index>last||domRead.nodeType(child)!==Node.ELEMENT_NODE)child.remove();
           else if(branches.has(child))prune(child);
           else clearText(child);
         }
@@ -145,4 +146,4 @@ function selectionUI({encodeDom, decodeDom}) {
 }
 
 // Inject the shared codec into the self-contained browser function.
-export const installSelectionUI = new Function(`${DOM_CODEC}\nreturn (${selectionUI.toString()})({encodeDom, decodeDom});`);
+export const installSelectionUI = new Function(`${DOM_CODEC}\nreturn (${selectionUI.toString()})({encodeDom, decodeDom, domRead});`);

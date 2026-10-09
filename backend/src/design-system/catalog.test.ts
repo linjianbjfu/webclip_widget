@@ -8,7 +8,7 @@ it("validates the shipped catalog and returns bounded, size-specific dependencie
   const args = { pattern: "metric-chart", size: "middle" };
   const context = designContext(args);
   expect(context.tokens.size).toEqual(TOKENS.sizes.middle);
-  expect(context.components.map(item => item.id)).toEqual(["hero", "row", "trend"]);
+  expect(context.components.map(item => item.id)).toEqual(["group", "hero", "row", "trend"]);
   expect(context).not.toHaveProperty("examples");
   const expanded = designContext({ ...args, include_examples: true });
   expect(expanded.examples).toHaveLength(2);
@@ -53,6 +53,8 @@ it("rejects invalid catalog definitions through the production gate", () => {
     expect(() => validateCatalog(catalog)).toThrow();
   }
   for (const tokens of [
+    { ...TOKENS, radius: { ...TOKENS.radius, group: 0 } },
+    { ...TOKENS, themes: { ...TOKENS.themes, light: { ...TOKENS.themes.light, surfaceMuted: "invalid" } } },
     { ...TOKENS, line: -1 }, { ...TOKENS, font: "" }, { ...TOKENS, spacing: [] },
     { ...TOKENS, sizes: { small: TOKENS.sizes.small } },
     { ...TOKENS, themes: { ...TOKENS.themes, light: { ...TOKENS.themes.light, primary: "not a color" } } },

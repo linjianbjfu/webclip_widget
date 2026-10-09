@@ -1,6 +1,6 @@
 # Widget Design System
 
-生成模型使用 [design-system](../backend/src/design-system/) 中的设计定义组织 widget。视觉依据是 [widgets](../design/widget-style/widgets.webp)、[widgets2](../design/widget-style/widgets2.webp)、[StepCounter](../design/widget-style/StepCounter.webp) 和 [instagramAndThread](../design/widget-style/instagramAndThread.webp)：清晰主次、充足留白、中性色底、少量强调色，以及适量线条、图形或图片。参考图中的按钮和外部展示框不属于静态 widget。
+生成模型使用 [design-system](../backend/src/design-system/) 中的设计定义组织 widget。视觉依据是 [widgets](../design/widget-style/widgets.webp)、[widgets2](../design/widget-style/widgets2.webp)、[StepCounter](../design/widget-style/StepCounter.webp) 和 [instagramAndThread](../design/widget-style/instagramAndThread.webp)：清晰主次、白色主背景、浅灰信息分区、少量强调色，以及适量线条、图形或图片。参考图中的按钮和外部展示框不属于静态 widget。
 
 ## 定义与归属
 
@@ -8,14 +8,24 @@
 | --- | --- |
 | [core.ts](../backend/src/design-system/core.ts) | 常驻内容取舍、用户偏好、图形与图像优先及 canvas 支持边界 |
 | [tokens.ts](../backend/src/design-system/tokens.ts) | 明暗语义颜色、字体、间距、线宽、圆角和各尺寸建议值 |
-| [components](../backend/src/design-system/components/index.ts) | 主信息、信息行、状态、进度、趋势图、图片和分隔线的语义规范 |
+| [components](../backend/src/design-system/components/index.ts) | 信息组、主信息、信息行、状态、进度、趋势图、图片和分隔线的语义规范 |
 | [patterns](../backend/src/design-system/patterns/index.ts) | 布局用途、数据前提、组件引用和三档构图建议 |
-| [examples](../backend/src/design-system/examples/index.ts) | 四张参考图的短构图分析 |
+| [examples](../backend/src/design-system/examples/index.ts) | 参考图的短构图分析 |
 | [images.ts](../backend/src/design-system/images.ts) | 图片使用政策、预算及提供给模型的异步提取代码 |
 | [review.ts](../backend/src/design-system/review.ts) | 模型检查真实渲染截图时的视觉问题 |
 | [catalog.ts](../backend/src/design-system/catalog.ts) | 稳定索引、工具参数、上下文组合及目录校验 |
 
 这些文件静态打包进 Worker。组件是生成 HTML 的规范，不是宿主 API 或运行时组件库；token 是可适配的默认设计值，明确的用户风格优先。三文件交付、真实数据及静态截图要求始终适用。已有下载 HTML 自包含，不会随目录更新自动改变。
+
+## 白底、分区与图片层次
+
+浅色主题以白色为主画布，相关辅助字段或当前事项可以用浅灰底区分；底色与分区圆角分别引用 tokens 中的 surface、surfaceMuted 和 radius.group。深色主题有对应的分区底色，明确的用户配色优先。group 组件描述平面信息组：内边距经济、文字对齐，不给每行套卡片，不层层嵌套。纯文本密集列表或单一信息可以保持白底。
+
+图片可作主体、行内识别图，也可作整个或局部背景。背景适合放在顶部、边缘或文字较少的一侧，通过裁切、独立透明度或向底色渐隐的遮罩保护正文；不把文字放入一起变淡的父层。用定位在正文后方的 img 复用加载、解码和失败检查，CSS background-image 不作为独立加载通道。图片变化时背景同步更新，缺失或损坏时移除图片层，底色和文字仍可阅读。图片承载识别任务时应保留足够细节；装饰不挤占必要正文。
+
+用户参考图提供不同的组织方式：[会议详情](../design/widget-style/meeting-details.png)将辅助信息放入浅灰区，[应用用时](../design/widget-style/app-usage.png)用图标辅助扫读，[药品背景](../design/widget-style/medicine-background.png)示范局部淡图，[位置背景](../design/widget-style/parking-background.png)示范图片向白底过渡，[当前与下一项](../design/widget-style/current-next.png)用底色区分状态，[并列日程](../design/widget-style/paired-routines.png)用一条细线区分同级信息。参考中的操作按钮、外部展示框和业务素材不直接照搬，也不要求每个 widget 都有色块或背景图。
+
+图片来源继续遵循下方的现有提取规则：普通 img 或已提供的合适静态素材，不新增源网页 CSS 背景采集、图片搜索/生成或远程地图服务。没有对应素材时用文字、分区和简单主题图形构图，不能虚构地图位置、人物或商品。
 
 ## 模型如何使用
 
@@ -50,6 +60,8 @@ brief 常驻核心原则及自动生成的模式摘要。模型读取源网页�
 `space-list` 使用雪球案例的十条市场热点标题，检查足够空间下完整展示十条、长标题、两条和空数据的自适应，以及所有状态下不自动添加覆盖提示；`space-limited` 保护明确只展示五条的要求。生成结果保留候选数据、原尺寸截图和文字几何测量。场景中的条数/空间检查只适用于该夹具，不是生产 HTML 的统一空白比例门禁。
 
 `dense-metrics`、`long-list`、`paragraphs` 分别覆盖三档密集选区，重跑生成的提取与渲染以检查数据变化、变短和空数据；`overfull` 检查小尺寸与明确全量要求的冲突回复。现有 `list` 保留六篇标题和栏目全量请求，`image` 检查自动选图、坏图降级和后续不用图。截图、提取数据、可见文本和回复随案例保留；usage 是模型实际报告的用量。
+
+`style-meeting`、`style-agenda` 检查默认白底和有意义的浅灰分区；`style-background` 检查默认选图、后续明确要求的局部淡背景、图片变化与缺图降级，以及深色不用图偏好。保存的原尺寸截图用于评估遮罩、正文与图片关系；颜色和图层检查仅用于这些已知场景，不是任意页面的统一审美门禁。
 
 `image-plant`、`image-movies` 使用可重复生成的来源插图，检查用户未要求用图时的内容判断，以及记录与图片一起更新、缺图、坏图和离线不可读远程图的降级；`image-decoration` 检查纯指标页面中的无关广告图被省略。这些案例经真实模型生成，但图片素材是测试插图，不代表第三方网站的图片读取已通过。在线同源、CORS 与防盗链的浏览器检查由 [images.browser.test.mjs](../backend/src/agent/images.browser.test.mjs) 覆盖。
 

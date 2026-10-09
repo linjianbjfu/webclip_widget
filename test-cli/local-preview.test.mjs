@@ -135,11 +135,12 @@ test('actual preview CLI help and validation work without server credentials', a
 });
 
 
-test('missing Chrome reports the executable and leaves no temporary profile', async t => {
+test('missing Chrome reports the executable and preserves the dedicated profile', async t => {
   const input=await fixture(t);
   const profiles=join(input.root,'profiles'); await mkdir(profiles);
+  await writeFile(join(profiles,'retained'),'login data');
   const child=spawn(process.execPath,[fileURLToPath(new URL('./index.mjs',import.meta.url)),'preview','--source',input.source,'--out',input.out],{
-    env:{...process.env,CHROME_EXECUTABLE:join(input.root,'missing-chrome'),TMPDIR:profiles,TMP:profiles,TEMP:profiles},
+    env:{...process.env,CHROME_EXECUTABLE:join(input.root,'missing-chrome'),WEBCLIP_BROWSER_USER_DATA_DIR:profiles},
     stdio:['ignore','pipe','pipe'],
   });
   let errors=''; child.stderr.on('data',bytes=>{errors+=bytes;});
@@ -148,5 +149,6 @@ test('missing Chrome reports the executable and leaves no temporary profile', as
   assert.equal(signal,null); assert.equal(code,1);
   assert.match(errors,/Cannot start Chrome/);
   assert.match(errors,/CHROME_EXECUTABLE/);
-  assert.deepEqual(await readdir(profiles),[]);
+  assert.deepEqual(await readdir(profiles),['retained']);
+  assert.equal(await readFile(join(profiles,'retained'),'utf8'),'login data');
 });

@@ -14,11 +14,11 @@ Status: implemented
 
 结果在 out 内暂存后重命名为 data.json，覆盖旧数据，其他产物保持不变。提取、校验或写入失败不覆盖原数据，也不启动结果服务。提取成功后关闭源页面，并启动仅监听 127.0.0.1、自动分配端口的静态 HTTP server，服务范围限定在 out。根请求打开 widget.html，禁止目录索引、路径穿越及符号链接越界，响应禁用缓存。
 
-结果页在同一浏览器中按 meta 的参考尺寸打开，真正通过 HTTP 读取磁盘 data.json。widgetReady、字体、图片成功后才打印就绪。Ctrl-C/SIGTERM、关闭结果标签页或浏览器都会结束流程；浏览器和服务关闭完成后删除临时 profile。渲染失败返回非零，但保留已提取的数据。
+结果页在同一浏览器中按 meta 的参考尺寸打开，真正通过 HTTP 读取磁盘 data.json。widgetReady、字体、图片成功后才打印就绪。Ctrl-C/SIGTERM、关闭结果标签页或浏览器都会结束流程；浏览器和服务关闭完成后保留交互式 profile，无头测试清理临时 profile。渲染失败返回非零，但保留已提取的数据。
 
 ### 资源与依赖归属
 
-浏览器启动、连接、有界操作及进程清理由 test-cli/browser.mjs 拥有，CLI 和 backend 的 Node 浏览器测试共用。每次运行原子分配临时 profile 和调试端口；HTTP 使用 listen(0)，不扫描并抢占预测端口。test-cli 作为 npm workspace 显式声明 Puppeteer 依赖，共享根 lockfile，不依赖 backend 的偶然依赖提升，也不自动下载浏览器。
+浏览器启动、连接、有界操作及进程清理由 test-cli/browser.mjs 拥有，CLI 和 backend 的 Node 浏览器测试共用。调试端口及 HTTP 使用系统分配的空闲端口，不扫描并抢占预测端口。无头检查原子分配临时 profile；交互式固定目录、持久化及占用限制由[CLI 浏览器登录状态持久化](2026-10-09-cli-persistent-browser-profile.md)拥有。test-cli 作为 npm workspace 显式声明 Puppeteer 依赖，共享根 lockfile，不依赖 backend 的偶然依赖提升，也不自动下载浏览器。
 
 Chrome 辅助进程可能在主进程退出后继续持有继承的 stderr。启动器在主进程 exit 时关闭自己持有的 stderr 读取端，再等待 close，避免清理被独立的更新/崩溃报告进程寿命拖住。Puppeteer 的可移除生命周期监听使用 on/off 配对，源页面的主动关闭不触发整条预览退出。
 

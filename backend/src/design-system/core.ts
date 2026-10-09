@@ -28,10 +28,14 @@ or status. Use clear text when suitable imagery/data is absent or unreadable at 
 the user requests no images. Decoration cannot replace meaning; never freeze changing content in a
 screenshot. An img on the page alone does not justify using it.
 
-Use whitespace, alignment and typography before containers: a neutral surface, strong primary text,
-quiet secondary text and one contextual accent. Avoid nested cards, heavy shadows and competing
-highlights. Start with the size tokens: body is for readable titles/item names/content; caption is
-only for short auxiliary labels, never an entire list. When crowded, remove redundant labels and
+Default to a white canvas, strong primary text, quiet secondary text and a restrained accent.
+Use a soft neutral inset surface to distinguish meaningful supporting groups or a current item;
+whitespace or a fine divider can separate peers. Avoid repeated boxes, nested cards and heavy shadows.
+Relevant images may lead, support a row or enrich a whole/partial background. Place background imagery
+near an edge or behind a quiet area, fading the image toward the surface while keeping text opaque
+and readable. Use these layers when they clarify content; a dense list or a single focus may stay plain.
+Explicit color/theme preferences take precedence. Start with the size tokens: body is for readable
+titles/item names/content; caption is only for short auxiliary labels, never an entire list. When crowded, remove redundant labels and
 decoration, compact headings and spacing, then recompose or omit optional details and rows while
 retaining readable rhythm. Preserve graphics/images that carry the main information;
 simplify their details or use a more compact expression if essential text remains crowded. Do not

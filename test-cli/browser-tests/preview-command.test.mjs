@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {once} from 'node:events';
 import { spawn } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,7 +32,7 @@ const child=spawn(${JSON.stringify(chrome)},['--headless',...process.argv.slice(
 process.on('SIGTERM',()=>child.kill());process.on('SIGINT',()=>child.kill());
 child.on('error',error=>{console.error(error.message);process.exitCode=1;});
 child.on('close',code=>{process.exitCode=code??0;});\n`,{mode:0o755});
-  const env={...process.env,CHROME_EXECUTABLE:launcher,TMPDIR:profiles};
+  const env={...process.env,CHROME_EXECUTABLE:launcher,WEBCLIP_BROWSER_USER_DATA_DIR:profiles};
   delete env.WEBCLIP_URL; delete env.WEBCLIP_TOKEN;
   for (const [signal,stage] of [['SIGINT','ready'],['SIGTERM','waiting']]) {
     const child=spawn(process.execPath,[fileURLToPath(new URL('../index.mjs',import.meta.url)),'preview','--out',out],{env,stdio:['ignore','pipe','pipe']});
@@ -57,7 +57,7 @@ child.on('close',code=>{process.exitCode=code??0;});\n`,{mode:0o755});
     const exit=await bounded(closed,{timeout:15_000,label:'CLI shutdown'});
     assert.deepEqual(exit,{code:0,signal:null},stderr);
     if(url)await assert.rejects(fetch(url));
-    assert.deepEqual((await readdir(profiles)).filter(name=>name.startsWith('webclip-browser-')),[]);
+    assert.ok((await stat(join(profiles,'Default'))).isDirectory());
   }
   assert.deepEqual(JSON.parse(await readFile(join(out,'data.json'),'utf8')),{value:19});
 });

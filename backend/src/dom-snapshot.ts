@@ -55,16 +55,28 @@ export async function serializeDomSnapshot(source: string, root: DomNode): Promi
 export const DOM_CODEC = `
 const namespaces = ['http://www.w3.org/1999/xhtml','http://www.w3.org/2000/svg','http://www.w3.org/1998/Math/MathML'];
 const namespaceCode = ns => namespaces.includes(ns) ? namespaces.indexOf(ns) : ns;
+// Custom elements can shadow native getters, including relative-time.prefix on GitHub.
+const domRead = {};
+for (const [prototype, names] of [
+  [Node.prototype, ['nodeType','childNodes','parentNode','parentElement']],
+  [Element.prototype, ['namespaceURI','prefix','localName','attributes','previousElementSibling']],
+  [CharacterData.prototype, ['data']],
+  [HTMLTemplateElement.prototype, ['content']],
+]) for (const name of names) domRead[name] = Function.prototype.call.bind(Object.getOwnPropertyDescriptor(prototype, name).get);
+const attrRead = {};
+for (const name of ['namespaceURI','name','value']) attrRead[name] = Function.prototype.call.bind(Object.getOwnPropertyDescriptor(Attr.prototype, name).get);
 function encodeDom(root) {
   let count = 0;
   function visit(node, depth) {
     if (++count > ${DOM_LIMITS.nodes} || depth > ${DOM_LIMITS.depth}) throw new Error('DOM snapshot exceeds node/depth budget');
-    if (node.nodeType === 3 || node.nodeType === 8) return [node.nodeType, node.data];
-    if (node.nodeType !== 1) throw new Error('Unsupported DOM node type: ' + node.nodeType);
-    const result = [1, namespaceCode(node.namespaceURI), node.prefix ? node.prefix + ':' + node.localName : node.localName,
-      [...node.attributes].map(a => [namespaceCode(a.namespaceURI), a.name, a.value]),
-      [...node.childNodes].map(child => visit(child, depth + 1))];
-    if (node.namespaceURI === namespaces[0] && node.localName === 'template') result.push([...node.content.childNodes].map(child => visit(child, depth + 1)));
+    const type = domRead.nodeType(node);
+    if (type === 3 || type === 8) return [type, domRead.data(node)];
+    if (type !== 1) throw new Error('Unsupported DOM node type: ' + type);
+    const ns = domRead.namespaceURI(node), prefix = domRead.prefix(node), name = domRead.localName(node);
+    const result = [1, namespaceCode(ns), prefix ? prefix + ':' + name : name,
+      [...domRead.attributes(node)].map(a => [namespaceCode(attrRead.namespaceURI(a)), attrRead.name(a), attrRead.value(a)]),
+      [...domRead.childNodes(node)].map(child => visit(child, depth + 1))];
+    if (ns === namespaces[0] && name === 'template') result.push([...domRead.childNodes(domRead.content(node))].map(child => visit(child, depth + 1)));
     return result;
   }
   return visit(root, 0);

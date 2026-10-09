@@ -14,7 +14,7 @@ prompt 支持 --url 在线页面或唯一的 HTML --file，二者互斥；--sele
 
 区域最多 8 个。发送的是捕获时主文档 DOM 的 UTF-8 source.html 副本（有选区时精简，无选区时完整）、XPath 和文本、编号拼图及用户原始 prompt。工具节点从 HTML 和截图中排除，v2 以配对结构快照保留实时层级，XPath 唯一命中且选区树相等；新捕获不生成 sourceXPath，旧 v1 兼容保留。结构取舍见[实时 DOM 结构保真](../../implemented/bug-fix/2026-10-08-capture-live-dom-structure.md)，旧解析器限制见[捕获 XPath 校验](../bug-fix/2026-10-06-capture-xpath-parser-repair.md)。精简策略与正向路径保证见[DOM 精简与原 URL 预览](2026-10-06-pruned-capture-live-url-preview.md)。捕获前后保留 DOM、选区内容/区域位置不同会重采一次，持续变化时提示重选。预览确认发送的是已展示的捕获快照，不把等待用户确认期间页面的新状态混进去。
 
-本地源文件不修改。在线来源记录请求 URL、捕获时最终 URL 和 baseURI；server 不再次抓取页面。临时浏览器 profile 独立，用户可在浏览模式手动登录。整页导航后选择 UI 重新安装，旧目标不继承；脱离 DOM 的目标不能发送。
+本地源文件不修改。在线来源记录请求 URL、捕获时最终 URL 和 baseURI；server 不再次抓取页面。交互式浏览器使用独立专用 profile，用户可在浏览模式手动登录并在下次复用，目录与生命周期由[CLI 浏览器登录状态持久化](2026-10-09-cli-persistent-browser-profile.md)拥有。整页导航后选择 UI 重新安装，旧目标不继承；脱离 DOM 的目标不能发送。
 
 确认的捕获输入在发送前保存到会话的 capture 子目录；路径、覆盖和失败保留语义由[本地 debug 副本](2026-10-06-local-capture-debug.md)拥有。临时上传文件依旧在结束后清理。
 

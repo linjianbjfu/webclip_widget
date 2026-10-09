@@ -7,6 +7,39 @@ import {DOM_CODEC,serializeDomSnapshot} from '../../backend/src/dom-snapshot.ts'
 import {extractionExpression} from '../../backend/src/agent/extraction.ts';
 import {renderWidgetPreview} from '../../backend/src/agent/preview-render.ts';
 
+test('custom element properties cannot replace native snapshot fields or XPath names',async t=>{
+ const owned=await launchBrowser({headless:true});t.after(()=>owned.close());
+ const page=await owned.browser.newPage();
+ await page.setContent('<main id="region" style="min-height:100px"><relative-time datetime="2026-10-09">on Oct 9</relative-time><structural-card data-value="kept"><b>Issue title</b></structural-card></main>');
+ await page.evaluate(()=>{
+  customElements.define('relative-time',class extends HTMLElement {get prefix(){return 'on';}});
+  class StructuralCard extends HTMLElement {}
+  for(const [name,value] of Object.entries({prefix:'app',localName:'wrong',namespaceURI:'urn:wrong',nodeType:8,attributes:[],childNodes:[],parentNode:null,parentElement:null,previousElementSibling:null}))
+   Object.defineProperty(StructuralCard.prototype,name,{get(){return value;}});
+  customElements.define('structural-card',StructuralCard);
+  const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+  const use=document.createElementNS('http://www.w3.org/2000/svg','s:use');
+  use.setAttributeNS('http://www.w3.org/1999/xlink','xlink:href','#shape');svg.append(use);
+  document.querySelector('main').append(svg);
+ });
+ await page.evaluate(installSelectionUI);
+ await page.evaluate(new Function(`${DOM_CODEC}; window.restoreCapture=decodeDom;`));
+ for(const selector of [null,'main','relative-time','structural-card','structural-card b','svg']){
+  const result=await page.evaluate(selector=>{
+   const api=window.__webclipCapture,el=selector&&document.querySelector(selector);
+   api.state.regions=el?[{id:'r1',el}]:[];
+   const snapshot=api.snapshot(),doc=window.restoreCapture(snapshot.dom);
+   const original=document.querySelector(selector??'main');
+   const restored=selector?doc.evaluate(snapshot.regions[0].xpath,doc,null,XPathResult.FIRST_ORDERED_NODE_TYPE,null).singleNodeValue:doc.querySelector('main');
+   return {snapshot,equal:original.isEqualNode(restored),prefix:document.querySelector('relative-time').prefix};
+  },selector);
+  assert.equal(result.equal,true,selector);assert.equal(result.prefix,'on');
+  assert.doesNotMatch(result.snapshot.source,/<on:relative-time|<app:wrong/);
+  const extra=`(() => ({times:[...document.querySelectorAll('relative-time')].map(n=>n.getAttribute('datetime')),titles:[...document.querySelectorAll('structural-card b')].map(n=>n.textContent)}))()`;
+  if(selector===null||selector==='main')assert.equal(await page.evaluate(extractionExpression(extra)),await page.evaluate(extractionExpression(extra,result.snapshot.source,result.snapshot.dom)));
+ }
+});
+
 test('capture preserves runtime trees, namespaces, templates and extraction without parser repair',async t=>{
  const owned=await launchBrowser({headless:true});t.after(()=>owned.close());
  const page=await owned.browser.newPage();
