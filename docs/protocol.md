@@ -179,7 +179,9 @@ widget 构建的交付文件为 `out/extra.js`、`out/widget.html`、`out/meta.j
 
 脚本直接读取源网页的 `document`，变量留在 IIFE 内，可重复执行。它不修改网页、不执行捕获 HTML 中的脚本，也不负责写文件。网络请求仅限选中的 img 的图片 URL；捕获 DOM 预览不联网。
 
-模型可自主选择区域内适合 widget 构图的图片。extra.js 优先复用已有 PNG/JPEG/WebP base64 data URI；HTTP(S) 图片使用 `currentSrc || src`，以 `fetch(url, { mode: 'cors', credentials: 'omit', cache: 'force-cache' })` 取得原始字节，检查 HTTP 状态、MIME 与文件头，再编码为 base64。预算内保留原图字节，不直接返回 URL。每次最多处理 3 张图片，每个请求最多 3 秒、响应体最多 2 MiB；每 URI 180,000 字符、合计 360,000 字符（均含前缀）。可读原图超出字符预算时，可经临时 canvas 缩到最长边 512px 且不放大，PNG 仍超限时尝试 WebP 压缩；已有 data URI 超限则省略，不截断编码。fetch 失败可尝试已加载且像素可读的 img，仍失败则将该图片字段设为 null，文本提取继续。字段名由 bundle 约定，图片随对应业务记录传递。不读取网页 canvas、不修改原 img。
+模型可自主选择区域内适合 widget 构图的图片。extra.js 优先复用已有 PNG/JPEG/WebP base64 data URI；HTTP(S) 图片使用 `currentSrc || src`，以 `fetch(url, { mode: 'cors', credentials: 'omit', cache: 'reload', headers: { Accept: 'image/webp,image/png,image/jpeg;q=0.8' } })` 取得原始字节，检查 HTTP 状态、MIME 与文件头，再编码为 base64。声明支持的栅格格式，避免 CDN 默认转为丢失透明度的 JPEG；reload 绕过可能忽略 Accept 的旧缓存。响应格式仍须校验，服务端不保证遵守偏好。预算内保留返回的原图字节，不直接返回 URL。每次最多处理 24 个图片候选，共用一个提取器；按记录顺序收集候选，再 `await extract.all(candidates)`，按返回索引关联记录。最多 3 路并发，从首个调用起整批预算 6 秒，每次读取及异步解码最多 3 秒、响应体最多 2 MiB。每 URI 180,000 字符、合计 360,000 字符（均含前缀），按候选顺序分配；相同 URL 复用读取，但 data.json 中重复的 URI 仍分别计入预算。在 widget 中多次显示同一字段不增加提取预算。到期取消活动请求、停止队列，未完成项返回 null；同步栅格化由尺寸限制约束，并在返回前检查时限。
+
+可读原图超出单图字符预算时，可经临时 canvas 缩到最长边 512px 且不放大，PNG 仍超限时尝试 WebP 压缩；已有 data URI 超限则省略，不截断编码。fetch 失败且读取时限尚未用尽时可尝试已加载且像素可读的 img，仍失败则将该图片字段设为 null，文本提取继续。字段名由 bundle 约定，图片随对应业务记录传递。不读取网页 canvas、不修改原 img。
 
 网页能显示跨域图片不意味着 canvas 可读；普通模式加载的 img 可能污染 canvas，而单独 CORS fetch 仍可取得字节。fetch 仍受 CORS、CSP、防盗链与格式限制，不保证所有原图可提取。widget 不使用图片 URL 兜底，以免在新来源下触发防盗链。核心信息只存在于网页 canvas 且没有 DOM 表示时，允许明确生成失败；存在无关 canvas 不影响可提取的 DOM 内容。
 

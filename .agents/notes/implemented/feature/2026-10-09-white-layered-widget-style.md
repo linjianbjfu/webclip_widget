@@ -30,6 +30,10 @@ image 组件支持主体、行内识别图及整个或局部背景。背景可�
 
 本决策细化[简洁图文风格](2026-10-06-minimal-widget-design-style.md)的视觉默认值，并补充[按内容用图](../bug-fix/2026-10-08-contextual-image-priority.md)的图片角色；两篇的渐进加载、素材来源与提取边界继续有效，保持活跃并互相链接，无归档或删除。[空间利用](../bug-fix/2026-10-08-widget-space-utilization.md)与[正文优先](../bug-fix/2026-10-09-widget-content-without-coverage-labels.md)继续约束分区和图片的空间成本。
 
+[列表识别图标与主题背景](2026-10-09-content-icons-and-backgrounds.md)补充各条目的小图与低对比度主题层，保留本记录的白底、语义分区及独立图片层规则。
+
+[按信息关系分组与横向空间分配](../bug-fix/2026-10-09-widget-semantic-layout.md)补充组内关联、内容驱动的列宽和长名称回放；本记录的既有决策继续有效。
+
 ## 曾考虑的替代方案
 
 **只把默认背景改成白色。** 能改变底色，但缺少语义分区和图像层次，不能充分表达参考图的风格。

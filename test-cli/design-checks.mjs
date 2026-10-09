@@ -8,6 +8,8 @@ import {launchBrowser} from './browser.mjs';
 import {composeCaptureImage} from './capture-images.mjs';
 import {spaceCases, verifySpaceList, assertNoListCoverage} from './design-space-cases.mjs';
 import {styleCases, verifyStyle} from './design-style-cases.mjs';
+import {densityCases, verifyIconDensity} from './design-density-cases.mjs';
+import {iconCases, prepareIcons, verifyIcons} from './design-icon-cases.mjs';
 import {imageCases, prepareDesignImages, verifyDesignImages} from './design-image-cases.mjs';
 import {renderWidgetPreview} from '../backend/src/agent/preview-render.ts';
 import {extractionExpression} from '../backend/src/agent/extraction.ts';
@@ -34,6 +36,8 @@ const textBody = (status='尚未开放', details=true) => `<h1>北岸步道公�
 const emptyBody = '<h1>暂无数据</h1>';
 const cases=[
   ...styleCases,
+  ...iconCases,
+  ...densityCases,
   ...imageCases,
   ...spaceCases,
   {id:'small',size:'small',text:'用小号 widget 显示本月故障数。',body:'<h1>设备运行</h1><p>本月故障数 <b id="value">0</b></p><canvas></canvas>'},
@@ -68,6 +72,7 @@ try {
     });
     if(item.canvas)await page.evaluate(()=>{const c=document.querySelector('canvas'),x=c.getContext('2d');x.font='32px sans-serif';x.fillText('128',20,60);});
     if(item.artwork)await prepareDesignImages(page,item);
+    if(item.icons)await prepareIcons(page);
     await page.evaluate(()=>Promise.all([...document.images].map(img=>img.decode())));
     const source=await page.content();await writeFile(join(folder,'source.html'),source);
     const rect=await page.evaluate(()=>{const r=document.querySelector('main').getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};});
@@ -117,6 +122,8 @@ try {
         await writeFile(join(out,'text.txt'),rendered.text);
         if(item.space)await verifySpaceList(owned.browser,{item,source,html,extra,out});
         if(item.style)await verifyStyle(owned.browser,{item,out,turn});
+        if(item.density)await verifyIconDensity(owned.browser,{item,source,html,extra,out});
+        else if(item.icons)await verifyIcons(owned.browser,{item,source,html,extra,rendered,out,turn});
         if(item.artwork&&!(item.style==='image'&&turn===2))await verifyDesignImages(owned.browser,{item,source,html,extra,rendered,out});
         if(item.id==='dense-metrics'){
           assert.match(rendered.text,/18/);assert.match(rendered.text,/未恢复/);assert.match(rendered.text,/户/);assert.match(rendered.text,/东区/);

@@ -8,11 +8,13 @@ Status: implemented
 
 ## 决策
 
-extra.js 保持无参数、自包含 IIFE，允许异步返回普通 JSON 对象；执行器先等待结果，仍兼容同步脚本。选中 img 的 currentSrc/src 为 HTTP(S) URL 时，以 cors、omit credentials、force-cache 请求真实字节，优先保留预算内 PNG/JPEG/WebP 原图。超预算的可读图片缩至最长边 512px，PNG 仍超限时以 WebP 压缩；请求失败可尝试已加载且可读的 canvas，失败返回 null，不输出远程展示 URL。
+extra.js 保持无参数、自包含 IIFE，允许异步返回普通 JSON 对象；执行器先等待结果，仍兼容同步脚本。选中 img 的 currentSrc/src 为 HTTP(S) URL 时，以 cors、omit credentials、reload 和支持的栅格 Accept 请求真实字节，优先保留预算内 PNG/JPEG/WebP 原图。超预算的可读图片缩至最长边 512px，PNG 仍超限时以 WebP 压缩；请求失败可尝试已加载且可读的 canvas，失败返回 null，不输出远程展示 URL。
 
-最多处理三张图片；每次请求最多 3 秒、响应体最多 2 MiB，保留原有 URI 与总字符预算。捕获 DOM 不发网络请求，异步提取整体 15 秒超时。公开客户端流程需等待脚本的 Promise 才序列化；本仓库不包含 iOS 宿主实现。
+[列表图标批处理](../feature/2026-10-09-content-icons-and-backgrounds.md)支持最多 24 个候选、3 路并发及首个调用起 6 秒整批时限；每次读取及异步解码最多 3 秒、响应体最多 2 MiB，保留原有 URI 与总字符预算。捕获 DOM 不发网络请求，异步提取整体 15 秒超时。公开客户端流程需等待脚本的 Promise 才序列化；本仓库不包含 iOS 宿主实现。
 
 部分替代[直接执行提取脚本](../simplification/2026-10-01-direct-extraction-script.md)的同步限制，以及[设计系统](../feature/2026-10-06-minimal-widget-design-style.md)与[按内容用图](2026-10-08-contextual-image-priority.md)的图片读取机制。[CLI 本地预览](../feature/2026-10-05-cli-local-widget-preview.md)同步等待结果。无参数入口、内容选择与 base64 传递决策仍保留，旧笔记继续活跃并互链。
+
+[图片格式协商与视觉层级](2026-10-09-image-format-and-visual-priority.md)拥有 Accept 与缓存策略，防止 CDN 协商为丢失透明度的 JPEG；本记录继续拥有异步字节获取与失败降级机制。
 
 ## 曾考虑的替代方案
 

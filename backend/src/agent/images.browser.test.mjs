@@ -44,7 +44,7 @@ test('selected img conversion handles live origins, anti-hotlinking, inert captu
   const checks=await page.evaluate(`(async () => { ${IMAGE_EXTRACTOR}
     const uri=${JSON.stringify(data.image)};
     const img=new Image();img.src=uri;
-    const extract=createImageExtractor();const count=await Promise.all(Array.from({length:4},()=>extract(img)));
+    const extract=createImageExtractor();const count=await Promise.all(Array.from({length:${IMAGE_LIMITS.count+1}},()=>extract(img)));
     const large=new Image();large.src='data:image/png;base64,'+btoa(atob(uri.split(',')[1])+'x'.repeat(140000));
     const perImage=await createImageExtractor()(large);
     const medium=new Image();medium.src='data:image/png;base64,'+btoa(atob(uri.split(',')[1])+'x'.repeat(95000));
@@ -53,7 +53,7 @@ test('selected img conversion handles live origins, anti-hotlinking, inert captu
     const missing=new Image();
     return {count:count.map(Boolean),perImage,total:total.map(Boolean),malformed:await createImageExtractor()(malformed),missing:await createImageExtractor()(missing)};
   })()`);
-  assert.deepEqual(checks,{count:[true,true,true,false],perImage:null,total:[true,true,false],malformed:null,missing:null});
+  assert.deepEqual(checks,{count:[...Array(IMAGE_LIMITS.count).fill(true),false],perImage:null,total:[true,true,false],malformed:null,missing:null});
   assert.equal(IMAGE_LIMITS.longestSide,512);
 });
 
@@ -116,7 +116,7 @@ test('URL images use original CORS bytes without credentials and bound failed re
   const extra=`(async () => { ${IMAGE_EXTRACTOR} return {value:42,image:await createImageExtractor()(document.querySelector('img'))}; })()`;
   const data=JSON.parse(await page.evaluate(extractionExpression(extra)));
   assert.equal(data.image,'data:image/png;base64,'+png.toString('base64'));
-  // force-cache can reuse the img response; use a fresh URL to observe request credentials.
+  // Observe credentials on a selected URL independently of the earlier img load.
   await page.evaluate(`(async () => { ${IMAGE_EXTRACTOR}
     const img=new DOMParser().parseFromString('<img src="${origin}/fresh">','text/html').querySelector('img');
     return createImageExtractor()(img);
@@ -148,11 +148,11 @@ test('URL images use original CORS bytes without credentials and bound failed re
   assert.match(compressed,/^data:image\/webp;base64,/);assert.ok(compressed.length<IMAGE_LIMITS.perImageChars);
   const limited=await page.evaluate(`(async () => { ${IMAGE_EXTRACTOR}
     const extract=createImageExtractor();
-    return Promise.all(Array.from({length:5},(_,i)=>{
+    return Promise.all(Array.from({length:${IMAGE_LIMITS.count+2}},(_,i)=>{
       const img=new DOMParser().parseFromString('<img>','text/html').querySelector('img');
       img.src=${JSON.stringify(cross)}+'/limit?'+i;return extract(img);
     }));
   })()`);
-  assert.deepEqual(limited.map(Boolean),[true,true,true,false,false]);
-  assert.equal(requests.filter(r=>r.path.startsWith('/limit?')).length,3);
+  assert.deepEqual(limited.map(Boolean),[...Array(IMAGE_LIMITS.count).fill(true),false,false]);
+  assert.equal(requests.filter(r=>r.path.startsWith('/limit?')).length,IMAGE_LIMITS.count);
 });
