@@ -1,6 +1,6 @@
 # CLI 使用
 
-CLI 用于驱动服务端、执行端到端检查及本地预览 widget。[本地预览](#本地预览-widget)不需要服务端或凭据；其余服务端命令先完成[本地运行](development.md)，配置 `WEBCLIP_URL`、`WEBCLIP_TOKEN` 和 `WEBCLIP_USER`。前两项必填，用户标识默认是 `cli`。以下命令在仓库根目录执行；`<session>` 替换为创建会话返回的 ID。
+CLI 用于驱动服务端、执行端到端检查及本地预览 widget。[本地预览](#本地预览-widget)不需要服务端或凭据；`--api edgewidgets` 使用[独立配置](#调用-edge-widgets-api)；其余服务端命令先完成[本地运行](development.md)，配置 `WEBCLIP_URL`、`WEBCLIP_TOKEN` 和 `WEBCLIP_USER`。前两项必填，用户标识默认是 `cli`。以下命令在仓库根目录执行；`<session>` 替换为创建会话返回的 ID。
 
 ```bash
 export WEBCLIP_URL=http://localhost:8787
@@ -14,6 +14,7 @@ export WEBCLIP_USER=me
 npm run test-cli -- new "某个页面"          # 建会话
 npm run test-cli -- prompt "…"              # 跑一轮，流式打印；会话自动建
 npm run test-cli -- prompt <session> "…"    # 接着某个会话跑
+npm run test-cli -- -- --api edgewidgets --url "https://example.com" --prompt "…" # 调外部生成 API
 echo "你好啊" | npm run test-cli -- chat     # 一句话就说完，会话自动建
 npm run test-cli -- chat                    # 连续对话，每行一轮
 npm run test-cli -- chat <session>          # 接着已有会话聊
@@ -59,6 +60,87 @@ npm run test-cli -- prompt \
 
 
 `abort` 的执行限制、回放与重连语义见[客户端协议](protocol.md)。CLI 的 `events` 读取一次流；网络断开后需要再次调用并传入已收到的游标。
+
+## 调用 Edge Widgets API
+
+`--api edgewidgets` 不创建 webclip_widget 会话，也不读取 `WEBCLIP_URL`、`WEBCLIP_TOKEN` 或 `WEBCLIP_USER`。新模式需要独立配置：
+
+复制根目录的 `.env.example`：
+
+```powershell
+Copy-Item .env.example .env
+```
+
+然后编辑 `.env`：
+
+```dotenv
+SERVICE_URL=https://你的服务根地址
+GEC_API_KEY=你的GEC-API-Key
+CHROME_EXECUTABLE="C:\Program Files\Google\Chrome\Application\chrome.exe"
+```
+
+CLI 启动时自动读取仓库根 `.env`。当前终端、CI 或父进程已经设置的同名变量优先，不会被文件覆盖；`.env` 不存在时，所选命令仍按原有规则报告缺失配置。真实 `.env` 已被 Git 忽略，不要把密钥写入 `.env.example`。
+
+也可以只在当前终端设置：
+
+```bash
+export SERVICE_URL=https://example.edgewidgets.service
+export GEC_API_KEY=<service-api-key>
+```
+
+`GEC_API_KEY` 只用于计算请求的 `sec-ms-gec` 头，不写入输出或日志。CLI 同时发送 `sec-ms-gec-version: 1-153.0.4197.0`。
+
+新模式只接受一个 HTTP/HTTPS `--url` 和一个非空 `--prompt`；session ID、位置参数消息、`--file`、`--select`、`--gzip` 均会报错。CLI 会显示使用独立临时 profile 的 Chrome/Chromium 窗口，并打开原有区域选择界面。手动框选一个或多个目标区域，点击预览并确认发送；可返回重选或取消。确认后 CLI 读取重定向后的最终 URL、`document.title` 和裁剪后的 `source.html`，关闭窗口并调用：
+
+```bash
+node test-cli/index.mjs --api edgewidgets --url "https://www.baidu.com" --prompt "根据当前页面创建一个百度首页热搜头条 Widget"
+```
+
+`test-cli` 是目录，因此 Node 入口需要写成 `test-cli/index.mjs`。使用 npm 时，命令是：
+
+```bash
+npm run test-cli -- -- --api edgewidgets --url "https://www.baidu.com" --prompt "根据当前页面创建一个百度首页热搜头条 Widget"
+```
+
+npm 11 会消费第一层之后的选项名，因此该入口需要写成：
+
+```bash
+npm run test-cli -- -- --api edgewidgets --url "https://www.baidu.com" --prompt "根据当前页面创建一个百度首页热搜头条 Widget"
+```
+
+第一个 `--` 结束 npm 自己的参数解析，第二个 `--` 作为脚本参数保留下来并由 CLI 忽略。推荐直接使用上面的 `node test-cli/index.mjs`，避免 npm 的额外参数层。
+
+```text
+POST ${SERVICE_URL}/api/edgewidgets/generate
+```
+
+请求字段为 `userQuery`、`url`、`pageTitle`、空数组 `history` 和 `htmlContent`。HTTP 或响应校验失败时命令返回非零，不保存产物。
+
+`htmlContent` 只保留通往选区的必要结构、选区内容及 XPath 稳定性需要的前方元素，不是整页自动快照。选择阶段生成的截图和 capture metadata 用于本地预览与裁剪，不发送给当前外部 API。取消选择时不调用 API，也不创建输出目录。
+
+每次实际发出 API 请求后，CLI 都保存调用记录。成功响应另将 `extractScript` 和 `widgetHtml` 原样保存：
+
+```text
+downloads/api-YYYYMMDD-HHmmss/
+  api-url.txt
+  request.json
+  response.json
+  extra.js
+  widget.html
+  meta.json
+  capture/
+    capture.json
+    source.html
+    regions.png | regions.jpg
+```
+
+`api-url.txt` 是实际 endpoint；`request.json` 是实际请求体；`response.json` 是实际响应体。JSON 使用两个空格缩进。记录不包含请求头、GEC token 或 `GEC_API_KEY`。`meta.json` 保留 API 的逻辑 size；响应同时提供合法 `width`、`height` 时也写入并用于预览，否则按 size 使用项目原三档画布。
+
+`capture/` 保存确认时的 metadata、裁剪 source.html 和可选区域拼图，文件名与 capture.json 引用一致。HTTP 错误、业务 `status` 失败、非 JSON 响应或响应缺少产物字段时，目录包含三份调用记录和 capture，不包含三个 widget 产物，命令仍返回非零。非 JSON body 作为 JSON 字符串保存在 `response.json`；网络或响应流在取得 body 前失败时保存 `null`。捕获取消或发请求前失败不创建目录。
+
+目录时间使用执行 CLI 的本地时区，精确到秒；同名目录已经存在时命令失败，不覆盖旧结果。响应的 `warnings` 打印到 stderr。
+
+Edge Widgets CLI 根据响应的 `size`、`width`、`height` 生成 `meta.json`，但不自动改写 `extra.js` 或 `widget.html`。外部代码仍可能不满足本仓库的同步 IIFE、`widgetReady`、静态无动画或 `#widget-root` 约定；metadata 只让预览使用正确画布，不等于通过三文件质量检查。调用记录包含裁剪 HTML、页面数据和生成结果，是本机明文调试材料；`downloads/` 已被 Git 忽略，分享前仍需检查敏感内容。
 
 ## 框选页面内容并生成 widget
 
@@ -113,6 +195,7 @@ CLI 校验文件集合、UTF-8 字节数、sha256 和 metadata，先将全部文
 
 ```bash
 npm run test-cli -- preview --out ./downloads/SESSION_ID
+npm run test-cli -- preview --out ./downloads/api-YYYYMMDD-HHmmss
 npm run test-cli -- preview --out ./downloads/SESSION_ID --source ./source.html
 npm run test-cli -- preview --help
 ```
@@ -123,9 +206,11 @@ npm run test-cli -- preview --help
 
 CLI 启动独立的可见 Chrome/Chromium，正常执行网页脚本；等待页面 load 后固定再等 **5 秒**，执行 extra.js 的完整内容。同步 JSON 对象通过校验后写入 out/data.json，已有数据文件被覆盖，其他文件保留。加载失败、HTTP 4xx/5xx、提取、校验或写入失败不会替换原数据。固定 5 秒不保证所有网站的异步数据都已到达，提取使用当时的 DOM；没有选择器或等待时长参数。
 
+目录同时包含 `api-url.txt`、`request.json`、`response.json` 时，CLI 自动识别为 Edge Widgets 兼容预览；三个标记缺一会报损坏。该模式允许 extra.js 返回 Promise，等待完成后仍要求结果是 JSON 对象。普通 bundle 不含这些标记，继续拒绝异步 extra.js，标准提取契约不放宽。
+
 提取结果可含选区图片的 base64 data URI，widget 直接从 data.json 显示，不再次请求原图 URL。跨域像素不可读或图片未就绪时可省略图片；服务端捕获 DOM 预览不能替代这条在线路径。renderer 已移除或隐藏的可选坏图不阻止就绪，仍可见的图片解码失败会报错。图片预算与支持边界见[产物协议](protocol.md#widget-文件与截图)。
 
-随后 CLI 启动仅监听 `127.0.0.1` 的 HTTP server，自动选择空闲端口，并在同一浏览器中打开 widget.html。页面按 meta 的参考尺寸显示，并从磁盘上的 data.json 读取数据。等 widgetReady、字体和图片完成后，终端打印 `Data saved:` 和 `Preview ready:`；只有这些步骤成功才报告就绪。渲染失败会退出并报告错误，已成功生成的 data.json 保留。
+随后 CLI 启动仅监听 `127.0.0.1` 的 HTTP server，自动选择空闲端口，并在同一浏览器中打开 widget.html。页面按 meta 的最终 viewport 显示，并从磁盘上的 data.json 读取数据。标准模式等待 widgetReady、字体和图片完成后打印 `Preview ready:`。Edge 兼容模式要求 data.json HTTP/JSON 成功，等待 DOM 稳定及字体、图片完成后打印 `Edge Widgets compatibility preview ready:`；它不要求外部页面提供 widgetReady 或 `#widget-root`，也不执行标准 bundle 的同步提取、静态无动画和重复渲染保证。两种模式都会先打印 `Data saved:`，失败不报告 ready，已成功生成的 data.json 保留。
 
 终端持续运行供查看；按 Ctrl-C、发送 SIGTERM、关闭预览标签页或关闭该浏览器会结束命令，关闭 HTTP 服务并删除临时浏览器 profile。再次提取时重新运行命令。命令不借用日常浏览器的登录态，不恢复捕获时的滚动位置或点击状态。在线列表内容可能已变化；显式 file URL 不能恢复原网站 origin 或缺失资源，精简的捕获 HTML 也不是完整网站存档。
 

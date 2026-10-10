@@ -60,6 +60,7 @@ test('prompt, chat and live events publish bundles through actual CLI entry poin
     }
     res.end('event: stream_end\ndata: {"sessionBusy":false}\n\n');
   });
+
   t.after(async () => {
     server.closeAllConnections();
     await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
@@ -87,5 +88,19 @@ test('prompt, chat and live events publish bundles through actual CLI entry poin
   }
   for (const file of out('events')) {
     assert.equal(await readFile(join(root, 'downloads', sessionId, file.path.slice(4)), 'utf8'), file.content);
+  }
+});
+
+test("edgewidgets mode rejects unsupported arguments before requiring either service", async () => {
+  const cases = [
+    [["--api", "unknown", "--url", "https://example.com", "--prompt", "message"], /Unknown API/],
+    [["--api", "edgewidgets", "--prompt", "message"], /requires --url/],
+    [["--api", "edgewidgets", "--url", "https://example.com"], /requires --prompt/],
+    [["--api", "edgewidgets", "--url", "https://example.com", "--file", "page.html", "--prompt", "message"], /does not accept/],
+  ];
+  for (const [args, expected] of cases) {
+    const result = await run(args, process.cwd(), "http://127.0.0.1:1");
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, expected);
   }
 });

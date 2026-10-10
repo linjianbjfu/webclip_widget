@@ -33,7 +33,11 @@ test('preview arguments require out and leave the source implicit for URL previe
 test('input checks require the three artifacts, allow existing data and reject invalid metadata', async t => {
   const input = await fixture(t);
   await writeFile(join(input.out, 'data.json'), '{"old":true}');
+  assert.equal((await previewInputs(input)).mode, 'standard');
   assert.equal((await previewInputs(input)).size, 'small');
+  assert.deepEqual((await previewInputs(input)).widgetViewport, {width:160,height:160});
+  await writeFile(join(input.out, 'meta.json'), '{"size":"large","width":360,"height":440}');
+  assert.deepEqual((await previewInputs(input)).widgetViewport, {width:360,height:440});
   await writeFile(join(input.out, 'meta.json'), '{"size":"medium"}');
   await assert.rejects(previewInputs(input), /meta.json/);
   await writeFile(join(input.out, 'meta.json'), '{"size":"small"}');
@@ -46,6 +50,15 @@ test('input checks require the three artifacts, allow existing data and reject i
   await assert.rejects(previewInputs({ ...input, source: input.out }), /Expected a file/);
   await assert.rejects(previewInputs({ ...input, out: input.source }), /Not a widget directory/);
   assert.equal(await readFile(join(input.out, 'data.json'), 'utf8'), '{"old":true}');
+});
+
+test('Edge Widgets markers select compatibility mode and partial markers are rejected', async t => {
+  const input = await fixture(t);
+  await writeFile(join(input.out, 'api-url.txt'), 'https://service.example/api/edgewidgets/generate\n');
+  await assert.rejects(previewInputs(input), /requires api-url.txt, request.json and response.json together/);
+  await writeFile(join(input.out, 'request.json'), '{}\n');
+  await writeFile(join(input.out, 'response.json'), '{}\n');
+  assert.equal((await previewInputs(input)).mode, 'edgewidgets');
 });
 
 test('default preview reads only pageUrl and viewport, while explicit source bypasses metadata', async t => {

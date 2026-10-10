@@ -162,6 +162,6 @@ export function installSelectionUI() {
       if(r.width<=0||r.height<=0)fail('选区不可见，请重新选择');
       return {id:item.id,xpath:capturedPath,...(path!==capturedPath?{sourceXPath:path}:{}),rect:{x:Math.max(0,r.x+scrollX),y:Math.max(0,r.y+scrollY),width:r.width,height:r.height},text:(item.el.innerText||'').trim().slice(0,4000),textOnly:textOnly(item.el),fingerprint:item.el.outerHTML};
     });
-    return {source,regions,pageUrl:location.href,baseUrl:document.baseURI,viewport:{width:innerWidth,height:innerHeight},documentSize:{width:Math.max(document.documentElement.scrollWidth,innerWidth),height:Math.max(document.documentElement.scrollHeight,innerHeight)}};
+    return {source,regions,pageTitle:document.title,pageUrl:location.href,baseUrl:document.baseURI,viewport:{width:innerWidth,height:innerHeight},documentSize:{width:Math.max(document.documentElement.scrollWidth,innerWidth),height:Math.max(document.documentElement.scrollHeight,innerHeight)}};
   };
 }

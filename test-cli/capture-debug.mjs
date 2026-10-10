@@ -4,9 +4,21 @@ import { basename, join } from 'node:path';
 import { parseCapture } from '../backend/src/capture.ts';
 import { artifactDirectory } from './artifacts.mjs';
 
+/** Write one validated capture into an empty destination directory. */
+export async function writeCaptureSnapshot(target, captured) {
+  const capture = parseCapture(captured.capture);
+  await mkdir(target);
+  for (const name of [capture.source, ...capture.images.map(image => image.file)]) {
+    const sources = captured.files.filter(path => basename(path) === name);
+    if (sources.length !== 1) throw new Error(`Capture debug input missing or duplicated: ${name}`);
+    await copyFile(sources[0], join(target, name));
+  }
+  await writeFile(join(target, 'capture.json'), `${JSON.stringify(capture, null, 2)}\n`, { flag: 'wx' });
+  return capture;
+}
+
 /** Replace the dedicated capture directory; preserve the previous snapshot on ordinary failure. */
 export async function saveCaptureDebug({ sessionId, captured, root }) {
-  const capture = parseCapture(captured.capture);
   const parent = artifactDirectory(sessionId, root);
   const target = join(parent, 'capture');
   await mkdir(parent, { recursive: true });
@@ -16,13 +28,7 @@ export async function saveCaptureDebug({ sessionId, captured, root }) {
   try {
     staging = await mkdtemp(join(parent, '.capture-'));
     const next = join(staging, 'next');
-    await mkdir(next);
-    for (const name of [capture.source, ...capture.images.map(image => image.file)]) {
-      const sources = captured.files.filter(path => basename(path) === name);
-      if (sources.length !== 1) throw new Error(`Capture debug input missing or duplicated: ${name}`);
-      await copyFile(sources[0], join(next, name));
-    }
-    await writeFile(join(next, 'capture.json'), `${JSON.stringify(capture, null, 2)}\n`, { flag: 'wx' });
+    await writeCaptureSnapshot(next, captured);
     const existing = await lstat(target).catch(error => {
       if (error.code === 'ENOENT') return null;
       throw error;

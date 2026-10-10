@@ -79,10 +79,11 @@ test('URL load and extraction failures preserve old data and never use the captu
 
 test('independent browsers execute page scripts, write data and serve all widget sizes', async t => {
   const a=await fixture(t,'small',7), b=await fixture(t,'large',12);
+  await writeFile(join(b.out,'meta.json'),'{"size":"large","width":360,"height":440}');
   const first=preview(t,a), second=preview(t,b);
   const [one,two]=await Promise.all([first.ready,second.ready]);
   assert.notEqual(one.url,two.url); assert.notEqual(one.profile,two.profile);
-  for (const [info,size,value] of [[one,{width:160,height:160},7],[two,{width:344,height:360},12]]) {
+  for (const [info,size,value] of [[one,{width:160,height:160},7],[two,{width:360,height:440},12]]) {
     assert.deepEqual(JSON.parse(await readFile(info.dataPath,'utf8')),{value,label:'中文',missing:null});
     assert.equal(await info.page.evaluate(()=>document.querySelector('#widget-root').textContent),`中文 ${value}`);
     assert.deepEqual(await info.page.evaluate(()=>({width:innerWidth,height:innerHeight})),size);
@@ -105,10 +106,35 @@ test('independent browsers execute page scripts, write data and serve all widget
   assert.deepEqual((await readdir(a.out)).sort(),['data.json','extra.js','meta.json','widget.html']);
 });
 
+test('Edge Widgets compatibility preview awaits async extraction without widgetReady', async t => {
+  const input=await fixture(t,'large',12), source=await sourceServer(t);
+  await mkdir(join(input.out,'capture'));
+  await writeFile(join(input.out,'capture','capture.json'),JSON.stringify({
+    pageUrl:source.url+'/final',viewport:{width:1280,height:900},
+  }));
+  await writeFile(join(input.out,'api-url.txt'),'https://service.example/api/edgewidgets/generate\n');
+  await writeFile(join(input.out,'request.json'),'{}\n');
+  await writeFile(join(input.out,'response.json'),'{}\n');
+  await writeFile(join(input.out,'meta.json'),'{"size":"large","width":360,"height":440}');
+  await writeFile(join(input.out,'extra.js'),`(async()=>({
+    value:Number(document.querySelector('#value').textContent),label:'兼容预览'
+  }))()`);
+  await writeFile(join(input.out,'widget.html'),`<!doctype html><main id="external-root"></main><script>
+    fetch('./data.json').then(r=>r.json()).then(data=>{
+      document.querySelector('#external-root').textContent=data.label+' '+data.value;
+    });
+  </script>`);
+  const run=preview(t,{out:input.out}), info=await run.ready;
+  assert.deepEqual(JSON.parse(await readFile(info.dataPath,'utf8')),{value:42,label:'兼容预览'});
+  assert.equal(await info.page.evaluate(()=>document.querySelector('#external-root').textContent),'兼容预览 42');
+  assert.deepEqual(await info.page.evaluate(()=>({width:innerWidth,height:innerHeight})),{width:360,height:440});
+  run.stop.abort();await run.done;
+});
+
 test('extraction failure preserves existing data and widget readiness failure is not success', async t => {
   const input=await fixture(t);
   await writeFile(join(input.out,'data.json'),'{"previous":true}');
-  await writeFile(join(input.out,'extra.js'),'window.extractWidget = () => ({value:7})');
+  await writeFile(join(input.out,'extra.js'),'(async()=>({value:7}))()');
   const messages=[];
   await assert.rejects(runLocalPreview(input,{headless:true,report:message=>messages.push(message)}),/synchronous JSON object/);
   assert.equal(await readFile(join(input.out,'data.json'),'utf8'),'{"previous":true}');

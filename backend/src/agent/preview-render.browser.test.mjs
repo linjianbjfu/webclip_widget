@@ -62,6 +62,11 @@ test("real browser verifies all sizes, source isolation, HTTP data loading, over
     assert.ok(result.text.includes("0"));
     assert.ok(result.screenshotBytes > 100);
   }
+  const custom = await renderWidgetPreview(browser, {
+    size: "large", width: 360, height: 440, source, extra, html: widget(),
+  });
+  assert.deepEqual(custom.viewport, { width: 360, height: 440 });
+  assert.deepEqual(custom.root, { x: 0, y: 0, width: 360, height: 440 });
   for (const [change, expected] of [
     [{ css: "#widget-root{width:500px}" }, /fill the viewport|overflow/],
     [{ css: "#widget-root p{height:300px}" }, /overflow|clipped/],

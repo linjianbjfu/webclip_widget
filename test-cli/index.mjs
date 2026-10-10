@@ -12,6 +12,8 @@
  *   webclip prompt <session> <text> [--file PATH]... [--url URL] [--select] [--gzip]
  *                                       run a turn, optionally uploading the
  *                                       captured page and screenshot
+ *   webclip --api edgewidgets --url URL --prompt TEXT
+ *                                       generate through the Edge Widgets API
  *   webclip events <session> [since]    replay and follow
  *   webclip timeline <session>          where a turn's time went
  *   webclip abort <session>
@@ -23,13 +25,17 @@
  */
 
 import { createInterface } from "node:readline/promises";
+import { readFile } from "node:fs/promises";
 
 import { saveCaptureDebug } from "./capture-debug.mjs";
 import { artifactReceiver } from "./artifacts.mjs";
 import { Client, cursors } from "./client.mjs";
+import { loadCliEnv } from "./env.mjs";
 import { runChecks } from "./checks.mjs";
 import { followRenderer, render } from "./render.mjs";
 import { formatTimeline, timeline } from "./timeline.mjs";
+
+loadCliEnv();
 
 /** The shape `new` hands back, so a message is never mistaken for a target. */
 function isSessionId(value) {
@@ -46,8 +52,130 @@ function config() {
   return { baseUrl, token, userId: process.env.WEBCLIP_USER ?? "cli" };
 }
 
+function edgeWidgetsConfig() {
+  const serviceUrl = process.env.SERVICE_URL;
+  const apiKey = process.env.GEC_API_KEY;
+  if (!serviceUrl || !apiKey) {
+    console.error("SERVICE_URL and GEC_API_KEY must be set.");
+    process.exit(2);
+  }
+  return { serviceUrl, apiKey };
+}
+
+function parsePromptArgs(args) {
+  const files = [];
+  const words = [];
+  let api;
+  let gzip = false;
+  let promptText;
+  let url;
+  let select = false;
+  let sessionId;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--") {
+      continue;
+    } else if (args[i] === "--api") {
+      if (!args[i + 1] || args[i + 1].startsWith("--")) throw new Error("--api requires a value");
+      api = args[++i];
+    } else if (args[i] === "--prompt") {
+      if (promptText !== undefined || !args[i + 1] || args[i + 1].startsWith("--")) {
+        throw new Error("--prompt requires one message");
+      }
+      promptText = args[++i];
+    } else if (args[i] === "--select") { select = true; }
+    else if (args[i] === "--url") { if(url || !args[i+1] || args[i+1].startsWith("--"))throw new Error("--url requires one HTTP/HTTPS URL"); url = args[++i]; }
+    else if (args[i] === "--file") { if(!args[i+1] || args[i+1].startsWith("--"))throw new Error("--file requires a path"); files.push(args[++i]); }
+    else if (args[i] === "--gzip") gzip = true;
+    else if (args[i] === "--session") sessionId = args[++i];
+    else if (sessionId === undefined && words.length === 0 && isSessionId(args[i])) {
+      sessionId = args[i];
+    } else words.push(args[i]);
+  }
+  if (promptText !== undefined && words.length > 0) {
+    throw new Error("Use either --prompt or positional message text, not both");
+  }
+  return { api, files, gzip, promptText, select, sessionId, url, words };
+}
+
+async function runEdgeWidgetsPrompt(options) {
+  if (options.sessionId !== undefined) throw new Error("--api edgewidgets does not accept a session");
+  if (!options.url) throw new Error("--api edgewidgets requires --url");
+  if (options.files.length > 0 || options.select || options.gzip) {
+    throw new Error("--api edgewidgets does not accept --file, --select or --gzip");
+  }
+  const userQuery = options.promptText ?? options.words.join(" ");
+  if (userQuery.length === 0) throw new Error("--api edgewidgets requires --prompt");
+  const { capturePage } = await import("./capture-page.mjs");
+  const { edgeWidgetOutputId, generateEdgeWidget, saveEdgeWidgetOutput } = await import("./edgewidgets.mjs");
+  const apiConfig = edgeWidgetsConfig();
+  const stop = new AbortController();
+  const cancel = () => stop.abort();
+  process.on("SIGINT", cancel);
+  process.on("SIGTERM", cancel);
+  let captured;
+  try {
+    captured = await capturePage({ url: options.url, select: true }, { signal: stop.signal });
+    if (!captured) {
+      console.log("Capture cancelled; nothing sent.");
+      return;
+    }
+    const outputId = edgeWidgetOutputId();
+    let generated;
+    try {
+      generated = await generateEdgeWidget({
+        ...apiConfig,
+        userQuery,
+        url: captured.capture.pageUrl ?? options.url,
+        pageTitle: captured.pageTitle,
+        htmlContent: await readFile(captured.files[0], "utf8"),
+      });
+    } catch (error) {
+      if (error?.callRecord) {
+        try {
+          const folder = await saveEdgeWidgetOutput({
+            outputId,
+            callRecord: error.callRecord,
+            captured,
+          });
+          console.error(`Saved API call: ${folder}`);
+        } catch (saveError) {
+          throw new AggregateError(
+            [error, saveError],
+            `${error.message}; additionally failed to save API call: ${saveError.message}`,
+          );
+        }
+      }
+      throw error;
+    }
+    for (const warning of generated.warnings) console.error(`Warning: ${warning}`);
+    const folder = await saveEdgeWidgetOutput({
+      outputId,
+      callRecord: generated.callRecord,
+      captured,
+      extractScript: generated.extractScript,
+      meta: generated.meta,
+      widgetHtml: generated.widgetHtml,
+    });
+    console.log(`Saved widget: ${folder}`);
+  } finally {
+    await captured?.dispose();
+    process.off("SIGINT", cancel);
+    process.off("SIGTERM", cancel);
+  }
+}
+
 async function main() {
-  const [command, ...args] = process.argv.slice(2);
+  const argv = process.argv.slice(2);
+  const [command, ...args] = argv;
+  if (command?.startsWith("--")) {
+    const options = parsePromptArgs(argv);
+    if (options.api !== "edgewidgets") {
+      throw new Error(options.api === undefined ? "--api edgewidgets is required" : `Unknown API: ${options.api}`);
+    }
+    if (options.promptText === undefined) throw new Error("--api edgewidgets requires --prompt");
+    await runEdgeWidgetsPrompt(options);
+    return;
+  }
   if (command === "preview") {
     const { runPreviewCommand } = await import("./local-preview.mjs");
     await runPreviewCommand(args);
@@ -55,6 +183,13 @@ async function main() {
   }
   if (command === "check") {
     process.exit(await runChecks(config()));
+  }
+
+  const promptOptions = command === "prompt" ? parsePromptArgs(args) : undefined;
+  if (promptOptions?.api !== undefined) {
+    if (promptOptions.api !== "edgewidgets") throw new Error(`Unknown prompt API: ${promptOptions.api}`);
+    await runEdgeWidgetsPrompt(promptOptions);
+    return;
   }
 
   const client = new Client({ ...config(), strict: false });
@@ -73,28 +208,11 @@ async function main() {
       return;
     }
     case "prompt": {
-      const files = [];
-      const words = [];
-      let gzip = false;
-      let url;
-      let select = false;
-      let sessionId;
-      for (let i = 0; i < args.length; i++) {
-        if (args[i] === "--select") { select = true; }
-        else if (args[i] === "--url") { if(url || !args[i+1] || args[i+1].startsWith('--'))throw new Error('--url requires one HTTP/HTTPS URL'); url = args[++i]; }
-        else if (args[i] === "--file") { if(!args[i+1] || args[i+1].startsWith("--"))throw new Error("--file requires a path"); files.push(args[++i]); }
-        else if (args[i] === "--gzip") gzip = true;
-        else if (args[i] === "--session") sessionId = args[++i];
-        // A bare session id is accepted in the first position only, and only
-        // while it cannot be part of the message: a UUID is what `new` hands
-        // back, so reading one there turns no plausible message into a target.
-        else if (sessionId === undefined && words.length === 0 && isSessionId(args[i])) {
-          sessionId = args[i];
-        } else words.push(args[i]);
-      }
+      const { files, gzip, url, select, words } = promptOptions;
+      let { sessionId } = promptOptions;
       if (words.length === 0) {
         console.error('usage: webclip prompt [session] "<message>" [--file PATH]... [--url URL] [--select] [--gzip]');
-        console.error("  without a session one is created; --file may be repeated or omitted");
+        console.error('       webclip --api edgewidgets --url URL --prompt "message"');
         process.exit(2);
       }
       const { captureSource, capturePage } = await import('./capture-page.mjs');

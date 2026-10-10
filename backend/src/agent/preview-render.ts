@@ -2,16 +2,15 @@
 import { extractionExpression } from "./extraction.ts";
 import { IMAGE_READINESS } from "./image-readiness.ts";
 import type { Browser } from "@cloudflare/puppeteer";
-import { WIDGET_SIZES, type WidgetSize } from "../widget-contract.ts";
+import { widgetViewport, type WidgetMeta, type WidgetSize } from "../widget-contract.ts";
 
 const ORIGIN = "https://widget.local";
 const TIMEOUT_MS = 15_000;
 
-export interface PreviewFiles {
+export interface PreviewFiles extends WidgetMeta {
   html: string;
   extra: string;
   source: string;
-  size: WidgetSize;
 }
 
 export interface PreviewResult {
@@ -104,7 +103,7 @@ export async function renderWidgetPreview(browser: Browser, files: PreviewFiles)
   const note = (message: string): void => {
     if (errors.length < 25) errors.push(message.slice(0, 300));
   };
-  const viewport = WIDGET_SIZES[files.size];
+  const viewport = widgetViewport(files);
   try {
     const extraction = await context.newPage();
     await extraction.setRequestInterception(true);

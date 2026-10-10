@@ -121,7 +121,7 @@ export async function capturePage(options, { headless = false, signal, onPage, r
     if(attachments.some(file=>reserved.has(basename(file))))throw new Error('Attachment filename conflicts with captured files');
     const paths=[join(directory,'source.html'),...(result.filename?[join(directory,result.filename)]:[]),...attachments];
     const saved=directory;directory=undefined;
-    return {capture,files:paths,dispose:()=>rm(saved,{recursive:true,force:true})};
+    return {capture,files:paths,pageTitle:result.snapshot.pageTitle,dispose:()=>rm(saved,{recursive:true,force:true})};
   } catch(error) {
     if(stop.signal.aborted)return null;
     throw error;

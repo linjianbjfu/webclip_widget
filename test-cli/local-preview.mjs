@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { extractionExpression } from "../backend/src/agent/extraction.ts";
 import { IMAGE_READINESS } from "../backend/src/agent/image-readiness.ts";
-import { parseWidgetMeta, WIDGET_SIZES } from "../backend/src/widget-contract.ts";
+import { parseWidgetMeta, widgetViewport } from "../backend/src/widget-contract.ts";
 import { bounded, launchBrowser } from "./browser.mjs";
 import { startPreviewServer } from "./preview-server.mjs";
 
@@ -28,9 +28,24 @@ export function parsePreviewArgs(args) {
   return options;
 }
 
+async function optionalFile(path) {
+  try { return (await stat(path)).isFile(); }
+  catch (error) {
+    if (error.code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
 export async function previewInputs({ source, out }) {
   const directory = await realpath(out);
   if (!(await stat(directory)).isDirectory()) throw new Error(`Not a widget directory: ${out}`);
+  const markers = await Promise.all(
+    ['api-url.txt', 'request.json', 'response.json'].map(name => optionalFile(join(directory, name))),
+  );
+  if (markers.some(Boolean) && !markers.every(Boolean)) {
+    throw new Error('Edge Widgets preview requires api-url.txt, request.json and response.json together');
+  }
+  const mode = markers.every(Boolean) ? 'edgewidgets' : 'standard';
   for (const path of ['extra.js', 'widget.html', 'meta.json'].map(name => join(directory, name))) {
     if (!(await stat(path)).isFile()) throw new Error(`Expected a file: ${path}`);
   }
@@ -54,7 +69,7 @@ export async function previewInputs({ source, out }) {
     url=capture.pageUrl;
     viewport={width,height,deviceScaleFactor:1};
   }
-  return { url, viewport, out: directory, extra, size: meta.size };
+  return { mode, url, viewport, widgetViewport: widgetViewport(meta), out: directory, extra, size: meta.size };
 }
 
 /** Preserves existing data on validation, staging or rename failure. */
@@ -81,7 +96,75 @@ export async function loadAndExtract(page, input, { signal, wait = delay, report
   report('Source loaded; waiting 5 seconds before extraction.');
   await wait(SOURCE_WAIT_MS, undefined, { signal });
   signal?.throwIfAborted();
-  return bounded(page.evaluate(extractionExpression(input.extra)), { signal, label: 'extra.js execution' });
+  const expression = input.mode === 'edgewidgets'
+    ? `(async () => {
+        const run = new Function('scriptSource', 'return eval(scriptSource)');
+        const data = await run(${JSON.stringify(input.extra)});
+        if (!data || typeof data !== 'object' || Array.isArray(data)
+            || ![Object.prototype, null].includes(Object.getPrototypeOf(data))) {
+          throw new Error('Executing Edge Widgets extra.js must resolve to a JSON object');
+        }
+        return JSON.stringify(data, (_key, value) => {
+          if (value === null || typeof value === 'string' || typeof value === 'boolean'
+            || (typeof value === 'number' && Number.isFinite(value)) || Array.isArray(value)
+            || (typeof value === 'object' && [Object.prototype, null].includes(Object.getPrototypeOf(value)))) return value;
+          throw new Error('Edge Widgets extra.js result must contain only JSON values');
+        });
+      })()`
+    : extractionExpression(input.extra);
+  return bounded(page.evaluate(expression), { signal, label: 'extra.js execution' });
+}
+
+function waitForDataResponse(page, url, signal) {
+  return new Promise((resolve, reject) => {
+    let timer;
+    const cleanup = () => {
+      clearTimeout(timer);
+      page.off('response', onResponse);
+      signal?.removeEventListener('abort', onAbort);
+    };
+    const finish = callback => value => { cleanup(); callback(value); };
+    const onAbort = () => finish(reject)(signal.reason ?? new Error('Preview stopped'));
+    const onResponse = async response => {
+      if (response.url() !== url) return;
+      if (response.status() >= 400) {
+        finish(reject)(new Error(`data.json returned HTTP ${response.status()}`));
+        return;
+      }
+      try {
+        await response.json();
+        finish(resolve)();
+      } catch (error) {
+        finish(reject)(new Error(`data.json is not valid JSON: ${error.message}`));
+      }
+    };
+    page.on('response', onResponse);
+    signal?.addEventListener('abort', onAbort, { once: true });
+    timer = setTimeout(() => finish(reject)(new Error('data.json request timed out')), 15_000);
+    if (signal?.aborted) onAbort();
+  });
+}
+
+async function waitForStableDom(page, signal) {
+  return bounded(page.evaluate(`new Promise((resolve, reject) => {
+    const deadline = setTimeout(() => {
+      observer.disconnect();
+      reject(new Error('Edge Widgets DOM did not stabilize'));
+    }, 15000);
+    let settle;
+    const done = () => {
+      clearTimeout(deadline);
+      observer.disconnect();
+      resolve();
+    };
+    const changed = () => {
+      clearTimeout(settle);
+      settle = setTimeout(done, 500);
+    };
+    const observer = new MutationObserver(changed);
+    observer.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+    changed();
+  })`), { signal, timeout: 16_000, label: 'Edge Widgets DOM stability' });
 }
 
 /** Owns all resources until abort, browser closure or widget-tab closure. */
@@ -114,19 +197,33 @@ export async function runLocalPreview(options, { signal, headless = false, repor
     server = await startPreviewServer(input.out);
     stop.signal.throwIfAborted();
     const url = `${server.url}/widget.html`;
-    await widgetPage.setViewport({ ...WIDGET_SIZES[input.size], deviceScaleFactor: 1 });
+    await widgetPage.setViewport({ ...input.widgetViewport, deviceScaleFactor: 1 });
+    const widgetErrors = [];
+    widgetPage.on('pageerror', error => widgetErrors.push(error.message));
+    const dataResponse = input.mode === 'edgewidgets'
+      ? waitForDataResponse(widgetPage, `${server.url}/data.json`, stop.signal)
+      : undefined;
+    dataResponse?.catch(() => {});
     await bounded(widgetPage.goto(url, { waitUntil: 'load', timeout: 30_000 }), { signal: stop.signal, label: 'Widget loading' });
-    await bounded(widgetPage.evaluate(`(async () => {
-      if (!window.widgetReady || typeof window.widgetReady.then !== 'function') {
-        throw new Error('widget.html must expose window.widgetReady');
-      }
-      await window.widgetReady;
-      await document.fonts.ready;
-      await ${IMAGE_READINESS};
-    })()`), { signal: stop.signal, label: 'Widget readiness' });
+    if (input.mode === 'edgewidgets') {
+      await dataResponse;
+      await waitForStableDom(widgetPage, stop.signal);
+      if (widgetErrors.length) throw new Error(`Edge Widgets page error: ${widgetErrors[0].slice(0, 300)}`);
+      await bounded(widgetPage.evaluate(`Promise.all([document.fonts.ready, ${IMAGE_READINESS}])`),
+        { signal: stop.signal, label: 'Edge Widgets resources' });
+    } else {
+      await bounded(widgetPage.evaluate(`(async () => {
+        if (!window.widgetReady || typeof window.widgetReady.then !== 'function') {
+          throw new Error('widget.html must expose window.widgetReady');
+        }
+        await window.widgetReady;
+        await document.fonts.ready;
+        await ${IMAGE_READINESS};
+      })()`), { signal: stop.signal, label: 'Widget readiness' });
+    }
     stop.signal.throwIfAborted();
     report(`Data saved: ${dataPath}`);
-    report(`Preview ready: ${url}`);
+    report(`${input.mode === 'edgewidgets' ? 'Edge Widgets compatibility preview' : 'Preview'} ready: ${url}`);
     report('Press Ctrl-C or close the preview browser/tab to stop.');
     await onReady?.({ url, dataPath, page: widgetPage, browser: owned.browser, profile: owned.profile, pid: owned.pid });
     await stopped;

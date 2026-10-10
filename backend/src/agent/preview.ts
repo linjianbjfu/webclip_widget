@@ -13,13 +13,13 @@ export async function renderPreview(browserBinding: BrowserRun, fs: WorkspaceFs)
   const entries = await fs.readdirWithFileTypes(OUT_DIR);
   validateWidgetPaths(entries.map(entry => `out/${entry.name}`));
   if (entries.some(entry => !entry.isFile)) throw new Error("Widget artifacts must be files");
-  const { size } = parseWidgetMeta(await fs.readFile(`${OUT_DIR}/meta.json`));
+  const meta = parseWidgetMeta(await fs.readFile(`${OUT_DIR}/meta.json`));
   const [html, extra, source] = await Promise.all([
     fs.readFile(`${OUT_DIR}/widget.html`), fs.readFile(`${OUT_DIR}/extra.js`), fs.readFile("/source.html"),
   ]);
   const browser = await puppeteer.launch(browserBinding, { keep_alive: 600_000 });
   try {
-    const result = await renderWidgetPreview(browser, { html, extra, source, size });
+    const result = await renderWidgetPreview(browser, { html, extra, source, ...meta });
     if (result.extractedData !== null) await fs.writeFile(EXTRACTED_PATH, result.extractedData);
     return result;
   } finally {
