@@ -6,15 +6,28 @@ import {join} from 'node:path';
 import {launchBrowser} from '../browser.mjs';
 import {inspectIconDisplay,assertIconDisplay,assertImageEmphasis} from '../design-icon-cases.mjs';
 import {assertSeparatedIcons} from '../design-density-cases.mjs';
-test('quiet background checks accept pseudo-element graphics and reject absent or opaque decoration',async t=>{
+test('quiet backgrounds require source images and opaque text, not geometric decoration',async t=>{
  const root=await mkdtemp(join(tmpdir(),'webclip-icon-style-'));let owned;
  t.after(async()=>{await owned?.close();await rm(root,{recursive:true,force:true});});
  owned=await launchBrowser({headless:true});
- for(const [opacity,present] of [[.08,true],[1,true],[.08,false]]){
-  await writeFile(join(root,'widget.html'),`<style>body{margin:0}#widget-root{width:100vw;height:100vh;position:relative}#widget-root::before{content:${present?"''":"none"};position:absolute;width:80px;height:80px;opacity:${opacity};background-image:linear-gradient(blue,transparent)}</style><main id="widget-root">比分</main><script>window.widgetReady=Promise.resolve();</script>`);
+ const page=await owned.browser.newPage();
+ const uri=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=c.height=32;c.getContext('2d').fillRect(0,0,32,32);return c.toDataURL();});
+ await page.close();
+ const cases=[
+  ['image','<img class="background" src="'+uri+'">','.background{opacity:.08}',true],
+  ['container','<div class="background" style="opacity:.08"><img src="'+uri+'"></div>','',true],
+  ['masked','<img class="background" src="'+uri+'">','.background{opacity:.16;mask-image:linear-gradient(to right,transparent,black)}',true],
+  ['opaque','<img class="background" src="'+uri+'">','',false],
+  ['faded-text','<img class="background" src="'+uri+'">','#widget-root{opacity:.08}',false],
+  ['missing','','',false],
+  ['broken','<img class="background" src="data:image/png;base64,AAAA">','.background{opacity:.08}',false],
+  ['geometry','','#widget-root::before{content:"";position:absolute;width:80px;height:80px;border:2px solid orange;border-radius:50%;opacity:.08;background-image:linear-gradient(90deg,transparent 49%,orange 49%,orange 51%,transparent 51%),linear-gradient(transparent 49%,orange 49%,orange 51%,transparent 51%)}',false],
+ ];
+ for(const [name,content,style,valid] of cases){
+  await writeFile(join(root,'widget.html'),`<style>body{margin:0}#widget-root{width:100vw;height:100vh;position:relative}.background{position:absolute;width:80px;height:80px}img{width:80px;height:80px}${style}</style><main id="widget-root">${content}<span>比分</span></main><script>window.widgetReady=Promise.resolve();</script>`);
   const display=await inspectIconDisplay(owned.browser,root,'large');
-  if(opacity<.15&&present)assertIconDisplay(display,{expectedIcons:0,background:true});
-  else assert.throws(()=>assertIconDisplay(display,{expectedIcons:0,background:true}),/theme layer/);
+  if(valid)assertIconDisplay(display,{expectedIcons:0,expected:[uri],background:true});
+  else assert.throws(()=>assertIconDisplay(display,{expectedIcons:0,background:true}),/source-image background/,name);
  }
 });
 

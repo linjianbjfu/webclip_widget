@@ -15,11 +15,12 @@ test('score gate rejects concatenated or frozen nested values within the named r
  assert.throws(()=>assertSeparateScores(data,[['TOR','5','2'],['VGK','6','3']]),/remain separate/);
 });
 test('explicit all-icon scenario rejects omitted imagery, wrong images and missing requested backgrounds',()=>{
- const expected=Array.from({length:14},(_,i)=>'image-'+i),display={images:expected,decoration:true};
+ const expected=Array.from({length:14},(_,i)=>'image-'+i),display={images:expected,decoration:true,backgrounds:[expected[0]]};
  assertIconDisplay(display,{expectedIcons:14,expected,background:true});
  assert.throws(()=>assertIconDisplay({...display,images:expected.slice(0,2)},{expectedIcons:14}),/visible record icons/);
  assert.throws(()=>assertIconDisplay(display,{expectedIcons:14,expected:['wrong-image']}),/not displayed/);
- assert.throws(()=>assertIconDisplay({...display,decoration:false},{expectedIcons:14,background:true}),/theme layer/);
+ assert.throws(()=>assertIconDisplay({...display,backgrounds:[]},{expectedIcons:14,background:true}),/source-image background/);
+ assert.throws(()=>assertIconDisplay({...display,backgrounds:['invented']},{expectedIcons:14,expected,background:true}),/not a source image/);
  assert.throws(()=>assertIconDisplay(display,{noImage:true}),/no-image/);
  assert.throws(()=>assertIconDisplay({images:[],decoration:true},{noImage:true}),/no-theme/);
  assertIconDisplay({images:[],decoration:false},{noImage:true});

@@ -54,9 +54,10 @@ Use a soft neutral inset surface to distinguish meaningful supporting groups or 
 whitespace or a fine divider can separate peers. Avoid repeated boxes, nested cards and heavy shadows.
 Relevant images may lead, support a row or enrich a whole/partial background. Place background imagery
 near an edge or behind a quiet area, fading the image toward the surface while keeping text opaque
-and readable. Actively consider a quiet thematic layer: a relevant source-image crop or simple CSS/SVG
-motif at an edge, corner or header can add character without taking a row of space. Start around
-4–10% image/shape opacity and adjust at actual size; never fade the text or fabricate business data.
+and readable. Use suitable source imagery for quiet backgrounds; never invent decorative CSS/SVG
+watermarks from circles, crosses, arcs or grids. Low opacity does not make crude artwork suitable.
+Without suitable imagery, keep white space or meaningful gray groups. Data charts, useful foreground
+icons, dividers and image-fade masks remain valid. Adjust image opacity at actual size; never fade text.
 Keep a record-specific mark local to that record, especially in mixed-topic lists. Omit an unsuitable
 layer or respect a no-image request; do not treat background decoration as a required quota.
 Explicit color/theme preferences take precedence. Start with the size tokens: body is for readable

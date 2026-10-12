@@ -6,7 +6,7 @@ export const REVIEW = [
   "Does the default white canvas use muted groups only where they clarify relationships, with aligned text and economical padding? Are peers readable without nested panels or repeated boxes?",
   "Can each record be understood locally, with icons, names and values clearly paired? Regroup repeated empty middle bands and crowded edges; choose columns for actual name/value lengths and verify longer names and wider replacement values at the same type size. Are primary values separate from nested annotations in both extracted data and display?",
   "Do graphics and selected content follow current data, including zero, missing targets, gaps, ordering and changing list capacity with longer names, extra status and fewer records?",
-  "Would a quiet source-image or CSS/SVG thematic layer improve this composition without losing content? Does it leave a high-contrast text area, with opacity applied only to the decorative layer? Does the layout remain coherent without it, and do decorative layers preserve room for useful content?",
+  "Is a background made from suitable source imagery, rather than invented geometric watermarks? Remove crude circle/cross/arc motifs even if faint. Keep text opaque, useful content unobstructed and the layout coherent without the image; plain white or meaningful gray groups suffice.",
   "Do images match their current records, and do failed images leave readable text? Which image reads actually succeeded, and which remain unverified or failed? A text-only preview cannot verify live image extraction.",
   "Does the result honor explicit style preferences and remain complete without interaction, scrolling or motion?",
 ];

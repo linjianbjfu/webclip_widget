@@ -72,7 +72,7 @@ try {
     });
     if(item.canvas)await page.evaluate(()=>{const c=document.querySelector('canvas'),x=c.getContext('2d');x.font='32px sans-serif';x.fillText('128',20,60);});
     if(item.artwork)await prepareDesignImages(page,item);
-    if(item.icons)await prepareIcons(page);
+    if(item.icons)await prepareIcons(page,false,item.emblems);
     await page.evaluate(()=>Promise.all([...document.images].map(img=>img.decode())));
     const source=await page.content();await writeFile(join(folder,'source.html'),source);
     const rect=await page.evaluate(()=>{const r=document.querySelector('main').getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};});

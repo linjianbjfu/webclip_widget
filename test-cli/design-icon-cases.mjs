@@ -14,9 +14,9 @@ const longApps=['云端协作笔记本','团队共享日程表','离线电子书
 export const iconCases=[
  {id:'layout-scores',size:'large',icons:true,nested:true,expectedIcons:12,labels:layoutGames.flatMap(g=>[g[1],g[3]]),text:'用大号 widget 展示全部六场比赛，保留双方队徽、队名、主比分、点球比分、联赛与状态。',
   body:'<h1>赛事速览</h1><ol>'+layoutGames.map(([league,a,x,b,y])=>`<li><p>${league} ${a==='TOR'?'完赛 · 点球':x===null?'8:00 PM GMT+8':'完赛'}</p>`+[[a,x],[b,y]].map(([name,score],i)=>`<div><img alt="${name}队徽" width="32" height="32"><strong>${name}</strong><b class="score">${score??'—'}${a==='TOR'?`<sup title="点球比分">${i+1}</sup>`:''}</b></div>`).join('')+'</li>').join('')+'</ol>'},
- {id:'icons-scores',size:'large',icons:true,expectedIcons:14,labels:games.flatMap(g=>[g[1],g[3]]),text:'用大号 widget 展示全部七场比分，保留每队队徽、球队简称、比分、联赛和完赛状态。',
+ {id:'icons-scores',size:'large',icons:true,emblems:true,expectedIcons:14,labels:games.flatMap(g=>[g[1],g[3]]),text:'用大号 widget 展示全部七场比分，保留每队队徽、球队简称、比分、联赛和完赛状态。',
   body:'<h1>赛事比分</h1><ol>'+games.map(([league,a,x,b,y])=>`<li><p>${league} 完赛</p><div><img alt="${a}队徽" width="32" height="32"><strong>${a}</strong><b>${x}</b></div><div><img alt="${b}队徽" width="32" height="32"><strong>${b}</strong><b>${y}</b></div></li>`).join('')+'</ol>',
-  followups:['保持大号和全部七场比分、队徽，增加局部低透明度的主题背景图形，文字保持清晰。','保持大号和全部七场比分，不使用图片或主题图标。']},
+  followups:['保持大号和全部七场比分、队徽，选一张合适的来源图片作局部淡背景，只放在所属比赛区域，文字保持清晰。','保持大号和全部七场比分，不使用图片或主题图标。']},
  {id:'icons-apps',longNames:true,size:'large',icons:true,expectedIcons:6,labels:apps,text:'用大号 widget 展示全部六个应用的图标、名称及其使用时长。',
   body:'<h1>应用使用</h1><ol>'+apps.map((name,i)=>`<li><img alt="${name}图标" width="32" height="32"><strong>${name}</strong><span>${60-i*7} 分钟</span></li>`).join('')+'</ol>'},
 ];
@@ -24,14 +24,21 @@ for(const [id,base,text] of [
  ['emphasis-scores','layout-scores','用大号 widget 展示全部六场比赛的双方队徽、名称、主比分、点球比分、联赛和状态。以图片为主，让队徽尽可能大且易辨认，名称作为辅助标签、弱化文字，关键比分保持清楚。'],
  ['emphasis-apps','icons-apps','用大号 widget 展示全部六个应用的图标、名称及使用时长。以图片为主，让图标尽可能大、便于识别，名称作为辅助标签、弱化文字，时长清楚。'],
 ])iconCases.push({...iconCases.find(item=>item.id===base),id,text,emphasis:true});
-export async function prepareIcons(page,changed=false){
- await page.evaluate(changed=>{
+export async function prepareIcons(page,changed=false,emblems=false){
+ // Background selection needs recognizable artwork; numbered capacity markers are unsuitable.
+ await page.evaluate(({changed,emblems})=>{
   for(const [i,img] of [...document.images].entries()){
    const canvas=document.createElement('canvas');canvas.width=canvas.height=32;const c=canvas.getContext('2d');
-   c.fillStyle=`hsl(${(i*47+(changed?170:0))%360} 55% 45%)`;c.beginPath();c.arc(16,16,14,0,Math.PI*2);c.fill();
-   c.fillStyle='#fff';c.font='bold 14px sans-serif';c.textAlign='center';c.fillText(String(i+1),16,21);img.src=canvas.toDataURL();
+   c.fillStyle=`hsl(${(i*47+(changed?170:0))%360} 55% 45%)`;c.beginPath();
+   if(emblems){c.moveTo(2,2);c.lineTo(30,2);c.lineTo(28,19);c.quadraticCurveTo(25,27,16,30);c.quadraticCurveTo(7,27,4,19);c.closePath();}
+   else c.arc(16,16,14,0,Math.PI*2);
+   c.fill();c.fillStyle='#fff';
+   if(emblems){
+    c.beginPath();for(let n=0;n<10;n++){const a=n*Math.PI/5-Math.PI/2,r=n%2?4:10;c.lineTo(16+Math.cos(a)*r,15+Math.sin(a)*r);}c.closePath();c.fill();
+   }else{c.font='bold 14px sans-serif';c.textAlign='center';c.fillText(String(i+1),16,21);}
+   img.src=canvas.toDataURL();
   }
- },changed);
+ },{changed,emblems});
 }
 const imageValues=value=>typeof value==='string'?(/^data:image\//.test(value)?[value]:[]):value&&typeof value==='object'?Object.values(value).flatMap(imageValues):[];
 const scalars=value=>value&&typeof value==='object'?Object.values(value).flatMap(scalars):[String(value)];
@@ -80,11 +87,21 @@ export async function inspectIconDisplay(browser,out,size,labels=[],viewport=WID
      return quiet&&(s.position==='absolute'||el.matches('svg,img'))&&!el.textContent.trim();
     });
    });
+   const backgrounds=icons.filter(el=>{
+    if(!el.naturalWidth||!el.naturalHeight)return false;
+    let opacity=1,positioned=false;
+    for(let n=el;n&&root.contains(n);n=n.parentElement){
+     const s=getComputedStyle(n);opacity*=Number(s.opacity);
+     positioned ||= s.position==='absolute';
+     if(Number(s.opacity)<1&&n.textContent.trim())return false;
+    }
+    return positioned&&opacity>0&&opacity<1;
+   }).map(el=>el.src);
    const boxes=icons.filter(el=>{
     let opacity=1;for(let n=el;n&&root.contains(n);n=n.parentElement)opacity*=Number(getComputedStyle(n).opacity);
     return opacity>.15;
    }).map(el=>{const b=el.getBoundingClientRect();return {left:b.left,top:b.top,right:b.right,bottom:b.bottom};});
-   return {images,pairs,decoration,artwork,boxes};
+   return {images,pairs,decoration,backgrounds,artwork,boxes};
   });
   return {...display,records:measured.records};
  }finally{await page?.close();await server.close();}
@@ -94,7 +111,10 @@ export function assertIconDisplay(display,{expectedIcons,expected=[],pairs=[],no
  assert.ok(display.images.length>=expectedIcons,'not enough visible record icons');
  for(const uri of expected)assert.ok(display.images.includes(uri),'record icon not displayed');
  for(const pair of pairs)assert.ok(display.pairs?.some(actual=>actual.uri===pair.uri&&actual.label.includes(pair.label)),'icon paired with wrong record: '+pair.label);
- if(background)assert.ok(display.decoration,'missing quiet theme layer');
+ if(background){
+  assert.ok(display.backgrounds?.length,'missing quiet source-image background');
+  if(expected.length)assert.ok(display.backgrounds.every(uri=>expected.includes(uri)),'background is not a source image');
+ }
 }
 export async function verifyIcons(browser,{item,source,html,extra,rendered,out,turn}){
  if(item.nested)assertSeparateScores(JSON.parse(rendered.extractedData));
@@ -109,13 +129,13 @@ export async function verifyIcons(browser,{item,source,html,extra,rendered,out,t
  try{
   await page.setContent(source);const expected=await page.$$eval('img',imgs=>imgs.map(n=>n.src));
   const sourcePairs=()=>page.$$eval('img',imgs=>imgs.map(n=>({uri:n.src,label:n.parentElement.querySelector('strong').textContent})));
-  assertIconDisplay(display,{expectedIcons:item.expectedIcons,expected,pairs:await sourcePairs()});
+  assertIconDisplay(display,{expectedIcons:item.expectedIcons,expected,pairs:await sourcePairs(),background:turn===1});
   const values=imageValues(JSON.parse(rendered.extractedData));
   for(const uri of expected){assert.ok(values.includes(uri),'source icon not extracted');assert.ok(display.images.includes(uri),'record icon not displayed');assert.ok(!html.includes(uri),'image frozen in HTML');}
   for(const variant of ['updated','missing','broken',...(item.longNames?['long-names']:[]),...(item.nested?['nested-updated']:[])]){
    await page.setContent(source);
    if(variant==='updated'){
-    await prepareIcons(page,true);
+    await prepareIcons(page,true,item.emblems);
     await page.evaluate(()=>{const list=document.querySelector('ol');list.prepend(list.lastElementChild);document.querySelector('strong').textContent='NEW';});
    }else if(variant==='long-names')await page.$$eval('strong',(names,labels)=>names.forEach((n,i)=>n.textContent=labels[i]),longApps);
    else if(variant==='nested-updated')await page.$$eval('sup',nodes=>nodes.forEach((n,i)=>{n.textContent=String(i+2);n.parentElement.firstChild.textContent=String(i+5);}));
@@ -124,10 +144,12 @@ export async function verifyIcons(browser,{item,source,html,extra,rendered,out,t
    assert.deepEqual(result.errors,[],variant);
    await writeFile(join(out,variant+'.png'),Buffer.from(result.screenshotBase64,'base64'));
    await writeFile(join(out,variant+'.json'),result.extractedData);
-   if(item.emphasis&&['missing','broken'].includes(variant)){
+   if((item.emphasis||turn===1)&&['missing','broken'].includes(variant)){
     const variantOut=join(out,variant);await mkdir(variantOut,{recursive:true});
     await writeFile(join(variantOut,'widget.html'),html);await writeFile(join(variantOut,'data.json'),result.extractedData);
-    assertReadableIdentities(await inspectIconDisplay(browser,variantOut,item.size,item.labels),item.labels,TOKENS.sizes[item.size].caption);
+    const failedDisplay=await inspectIconDisplay(browser,variantOut,item.size,item.labels);
+    assertReadableIdentities(failedDisplay,item.labels,TOKENS.sizes[item.size].caption);
+    if(turn===1)assert.deepEqual(failedDisplay.backgrounds,[],'failed background retained');
    }
    if(variant==='nested-updated')assertSeparateScores(JSON.parse(result.extractedData),[['TOR','5','2'],['VGK','6','3']]);
    if(variant==='long-names'){
@@ -145,7 +167,7 @@ export async function verifyIcons(browser,{item,source,html,extra,rendered,out,t
     assert.ok(updated.every(uri=>!expected.includes(uri)),'updated icons were frozen');
     const variantOut=join(out,variant);await mkdir(variantOut,{recursive:true});
     await writeFile(join(variantOut,'widget.html'),html);await writeFile(join(variantOut,'data.json'),result.extractedData);
-    assertIconDisplay(await inspectIconDisplay(browser,variantOut,item.size),{expectedIcons:item.expectedIcons,pairs:await sourcePairs()});
+    assertIconDisplay(await inspectIconDisplay(browser,variantOut,item.size),{expectedIcons:item.expectedIcons,pairs:await sourcePairs(),background:turn===1,expected:updated});
    }else if(variant!=='long-names')for(const label of item.labels)assert.ok(result.text.includes(label),'image failure lost text');
   }
  }finally{await page.close();}
