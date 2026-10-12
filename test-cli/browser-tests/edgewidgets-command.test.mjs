@@ -5,7 +5,7 @@ import { once } from "node:events";
 import { readFile } from "node:fs/promises";
 
 import { capturePage } from "../capture-page.mjs";
-import { generateEdgeWidget } from "../edgewidgets.mjs";
+import { captureInputImage, generateEdgeWidget } from "../edgewidgets.mjs";
 
 async function button(page, id) {
   await page.evaluate(buttonId => {
@@ -87,6 +87,7 @@ test("selected regions become the Edge Widgets API page inputs", async t => {
     url: captured.capture.pageUrl,
     pageTitle: captured.pageTitle,
     htmlContent,
+    inputImage: await captureInputImage(captured),
   });
   assert.equal(generated.extractScript, "(() => ({value: 42}))()");
   assert.deepEqual(generated.meta, { size: "large", width: 360, height: 440 });
@@ -96,5 +97,13 @@ test("selected regions become the Edge Widgets API page inputs", async t => {
     pageTitle: "Captured title",
     history: [],
     htmlContent,
+    input_image: request.input_image,
   });
+  assert.match(request.input_image, /^data:image\/png;base64,/);
+  const imageBytes = Buffer.from(request.input_image.split(",", 2)[1], "base64");
+  assert.ok(imageBytes.length > 0);
+  assert.equal(imageBytes[0], 0x89);
+  assert.equal(imageBytes[1], 0x50);
+  assert.equal(imageBytes[2], 0x4E);
+  assert.equal(imageBytes[3], 0x47);
 });

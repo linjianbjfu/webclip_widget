@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  captureInputImage,
   computeGecToken,
   edgeWidgetOutputId,
   generateEdgeWidget,
@@ -43,6 +44,43 @@ async function captureFixture(root) {
   };
 }
 
+async function imageCaptureFixture(root, name, bytes) {
+  const input = await mkdtemp(join(root, "image-capture-"));
+  const source = join(input, "source.html");
+  const image = join(input, name);
+  await writeFile(source, "<!doctype html><p>captured image</p>");
+  await writeFile(image, bytes);
+  return {
+    capture: {
+      version: 1,
+      mode: "regions",
+      source: "source.html",
+      pageUrl: "https://example.com/final",
+      viewport: { width: 1280, height: 900 },
+      regions: [{
+        id: "r1",
+        xpath: "/html[1]/body[1]/p[1]",
+        rect: { x: 0, y: 0, width: 100, height: 20 },
+        text: "captured image",
+        imageId: "regions-image",
+        imageRect: { x: 0, y: 0, width: 1, height: 1 },
+      }],
+      images: [{
+        id: "regions-image",
+        file: name,
+        width: 1,
+        height: 1,
+        originalWidth: 1,
+        originalHeight: 1,
+        mimeType: name.endsWith(".png") ? "image/png" : "image/jpeg",
+        bytes: bytes.length,
+        role: "montage",
+      }],
+    },
+    files: [source, image],
+  };
+}
+
 test("computes the Bruno-compatible GEC token and local output id", async () => {
   assert.equal(
     await computeGecToken("fixture-key", new Date("2026-10-08T07:25:00.000Z")),
@@ -53,6 +91,8 @@ test("computes the Bruno-compatible GEC token and local output id", async () => 
 
 test("posts the captured page with GEC headers and validates the success response", async t => {
   let received;
+  const inputImageBytes = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+  const inputImage = `data:image/png;base64,${inputImageBytes.toString("base64")}`;
   const server = createServer(async (request, response) => {
     const chunks = [];
     for await (const chunk of request) chunks.push(chunk);
@@ -87,6 +127,7 @@ test("posts the captured page with GEC headers and validates the success respons
     url: "https://example.com/final",
     pageTitle: "Example",
     htmlContent: "<!doctype html><p>7</p>",
+    inputImage,
     date: new Date("2026-10-08T07:25:00.000Z"),
   });
   assert.deepEqual(result, {
@@ -98,6 +139,7 @@ test("posts the captured page with GEC headers and validates the success respons
         pageTitle: "Example",
         history: [],
         htmlContent: "<!doctype html><p>7</p>",
+        input_image: inputImage,
       },
       responseBody: {
         status: "Success",
@@ -125,7 +167,40 @@ test("posts the captured page with GEC headers and validates the success respons
     pageTitle: "Example",
     history: [],
     htmlContent: "<!doctype html><p>7</p>",
+    input_image: inputImage,
   });
+  assert.match(received.body.input_image, /^data:image\/png;base64,/);
+});
+
+test("encodes capture PNG/JPEG bytes and omits images for text-only captures", async t => {
+  const root = await temporary(t);
+  const png = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+  const jpeg = Buffer.from([0xFF, 0xD8, 0xFF, 0xE0]);
+  for (const [name, bytes] of [["regions.png", png], ["regions.jpg", jpeg]]) {
+    const captured = await imageCaptureFixture(root, name, bytes);
+    const encoded = await captureInputImage(captured);
+    const mime = name.endsWith(".png") ? "image/png" : "image/jpeg";
+    assert.equal(encoded, `data:${mime};base64,${bytes.toString("base64")}`);
+  }
+  assert.equal(await captureInputImage(await captureFixture(root)), undefined);
+});
+
+test("rejects missing, duplicate and empty capture image files before request construction", async t => {
+  const root = await temporary(t);
+  const png = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+  const missing = await imageCaptureFixture(root, "missing.png", png);
+  missing.files = missing.files.slice(0, 1);
+  await assert.rejects(captureInputImage(missing), /missing or duplicated/);
+
+  const duplicate = await imageCaptureFixture(root, "duplicate.png", png);
+  const duplicateDir = await mkdtemp(join(root, "duplicate-"));
+  const duplicatePath = join(duplicateDir, "duplicate.png");
+  await writeFile(duplicatePath, png);
+  duplicate.files.push(duplicatePath);
+  await assert.rejects(captureInputImage(duplicate), /missing or duplicated/);
+
+  const empty = await imageCaptureFixture(root, "empty.png", Buffer.alloc(0));
+  await assert.rejects(captureInputImage(empty), /is empty/);
 });
 
 test("failed API calls retain request and response records without echoing generated code", async () => {
@@ -197,6 +272,29 @@ test("failed API calls retain request and response records without echoing gener
   );
 });
 
+test("rejects incomplete or unsupported input image data URIs before fetch", async () => {
+  const base = {
+    serviceUrl: "https://service.example",
+    apiKey: "secret",
+    userQuery: "query",
+    url: "https://example.com",
+    pageTitle: "Example",
+    htmlContent: "<p>source</p>",
+    fetchImpl: async () => { throw new Error("fetch must not run"); },
+  };
+  for (const inputImage of [
+    "iVBORw0KGgo=",
+    "data:image/avif;base64,AAAA",
+    "data:image/png,AAAA",
+    "data:image/png;base64,",
+  ]) {
+    await assert.rejects(
+      generateEdgeWidget({ ...base, inputImage }),
+      /complete JPEG, PNG, GIF or WebP base64 data URI/,
+    );
+  }
+});
+
 test("maps external sizes and falls back when pixel dimensions are absent", async () => {
   const base = {
     serviceUrl: "https://service.example",
@@ -217,12 +315,14 @@ test("maps external sizes and falls back when pixel dimensions are absent", asyn
       }),
     });
     assert.deepEqual(result.meta, { size: expected });
+    assert.equal(Object.hasOwn(result.callRecord.requestBody, "input_image"), false);
   }
 });
 
 test("publishes successful artifacts and API records atomically", async t => {
   const root = await temporary(t);
-  const captured = await captureFixture(root);
+  const imageBytes = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+  const captured = await imageCaptureFixture(root, "regions.png", imageBytes);
   const outputId = "api-20160720-181818";
   const callRecord = {
     endpoint: "https://service.example/api/edgewidgets/generate",
@@ -232,6 +332,7 @@ test("publishes successful artifacts and API records atomically", async t => {
       pageTitle: "Example",
       history: [],
       htmlContent: "<p>source</p>",
+      input_image: `data:image/png;base64,${imageBytes.toString("base64")}`,
     },
     responseBody: {
       status: "Success",
@@ -279,7 +380,15 @@ test("publishes successful artifacts and API records atomically", async t => {
   );
   assert.equal(
     await readFile(join(folder, "capture", "source.html"), "utf8"),
-    "<!doctype html><p>captured</p>",
+    "<!doctype html><p>captured image</p>",
+  );
+  assert.deepEqual(await readFile(join(folder, "capture", "regions.png")), imageBytes);
+  assert.deepEqual(
+    Buffer.from(
+      JSON.parse(await readFile(join(folder, "request.json"), "utf8")).input_image.split(",", 2)[1],
+      "base64",
+    ),
+    imageBytes,
   );
   assert.equal(await readFile(join(folder, "widget.html"), "utf8"), "<p>one</p>");
   await assert.rejects(
@@ -295,7 +404,9 @@ test("publishes successful artifacts and API records atomically", async t => {
     /already exists/,
   );
   assert.equal(await readFile(join(folder, "extra.js"), "utf8"), "(() => ({value: 1}))()");
-  assert.deepEqual((await readdir(root)).sort(), [outputId, "capture-input"]);
+  const rootEntries = (await readdir(root)).sort();
+  assert.equal(rootEntries[0], outputId);
+  assert.match(rootEntries[1], /^image-capture-/);
 
   const blockedRoot = join(root, "blocked");
   await writeFile(blockedRoot, "file");

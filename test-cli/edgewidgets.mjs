@@ -1,5 +1,5 @@
-import { lstat, mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { lstat, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { basename, join, resolve } from "node:path";
 import { parseWidgetMeta } from "../backend/src/widget-contract.ts";
 import { writeCaptureSnapshot } from "./capture-debug.mjs";
 
@@ -66,6 +66,18 @@ function edgeWidgetMeta(body) {
   }));
 }
 
+export async function captureInputImage(captured) {
+  const image = captured?.capture?.images?.[0];
+  if (!image) return undefined;
+  const matches = captured.files.filter(path => basename(path) === image.file);
+  if (matches.length !== 1) {
+    throw new Error(`Capture input image missing or duplicated: ${image.file}`);
+  }
+  const bytes = await readFile(matches[0]);
+  if (bytes.length === 0) throw new Error(`Capture input image is empty: ${image.file}`);
+  return `data:${image.mimeType};base64,${bytes.toString("base64")}`;
+}
+
 export async function generateEdgeWidget({
   serviceUrl,
   apiKey,
@@ -73,13 +85,26 @@ export async function generateEdgeWidget({
   url,
   pageTitle,
   htmlContent,
+  inputImage,
   date = new Date(),
   fetchImpl = fetch,
 }) {
   if (typeof serviceUrl !== "string" || serviceUrl.length === 0) throw new Error("SERVICE_URL must be set");
+  if (inputImage !== undefined
+    && (typeof inputImage !== "string"
+      || !/^data:image\/(?:jpeg|png|gif|webp);base64,[a-z0-9+/]+=*$/i.test(inputImage))) {
+    throw new Error("Edge Widgets input image must be a complete JPEG, PNG, GIF or WebP base64 data URI");
+  }
   const token = await computeGecToken(apiKey, date);
   const endpoint = `${serviceUrl.replace(/\/+$/, "")}/api/edgewidgets/generate`;
-  const requestBody = { userQuery, url, pageTitle, history: [], htmlContent };
+  const requestBody = {
+    userQuery,
+    url,
+    pageTitle,
+    history: [],
+    htmlContent,
+    ...(inputImage === undefined ? {} : { input_image: inputImage }),
+  };
   const callRecord = { endpoint, requestBody, responseBody: null };
   let response;
   try {

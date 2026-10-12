@@ -106,7 +106,12 @@ async function runEdgeWidgetsPrompt(options) {
   const userQuery = options.promptText ?? options.words.join(" ");
   if (userQuery.length === 0) throw new Error("--api edgewidgets requires --prompt");
   const { capturePage } = await import("./capture-page.mjs");
-  const { edgeWidgetOutputId, generateEdgeWidget, saveEdgeWidgetOutput } = await import("./edgewidgets.mjs");
+  const {
+    captureInputImage,
+    edgeWidgetOutputId,
+    generateEdgeWidget,
+    saveEdgeWidgetOutput,
+  } = await import("./edgewidgets.mjs");
   const apiConfig = edgeWidgetsConfig();
   const stop = new AbortController();
   const cancel = () => stop.abort();
@@ -128,6 +133,7 @@ async function runEdgeWidgetsPrompt(options) {
         url: captured.capture.pageUrl ?? options.url,
         pageTitle: captured.pageTitle,
         htmlContent: await readFile(captured.files[0], "utf8"),
+        inputImage: await captureInputImage(captured),
       });
     } catch (error) {
       if (error?.callRecord) {

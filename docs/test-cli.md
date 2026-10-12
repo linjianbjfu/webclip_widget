@@ -114,7 +114,7 @@ npm run test-cli -- -- --api edgewidgets --url "https://www.baidu.com" --prompt 
 POST ${SERVICE_URL}/api/edgewidgets/generate
 ```
 
-请求字段为 `userQuery`、`url`、`pageTitle`、空数组 `history` 和 `htmlContent`。HTTP 或响应校验失败时命令返回非零，不保存产物。
+请求字段为 `userQuery`、`url`、`pageTitle`、空数组 `history`、`htmlContent`，以及可选 `input_image`。有区域拼图或整页截图时，CLI 按 capture MIME 生成完整 `data:image/png;base64,...` 或 `data:image/jpeg;base64,...` Data URI。EdgeServices 解码后校验大小，并要求 URI MIME 与 JPEG/PNG/GIF/WebP magic bytes 一致，再把该 Data URI 原样交给 vision 模型。纯文本选区没有图片时省略该字段。HTTP 或响应校验失败时命令返回非零，不保存 widget 产物。
 
 `htmlContent` 只保留通往选区的必要结构、选区内容及 XPath 稳定性需要的前方元素，不是整页自动快照。选择阶段生成的截图和 capture metadata 用于本地预览与裁剪，不发送给当前外部 API。取消选择时不调用 API，也不创建输出目录。
 
@@ -134,13 +134,13 @@ downloads/api-YYYYMMDD-HHmmss/
     regions.png | regions.jpg
 ```
 
-`api-url.txt` 是实际 endpoint；`request.json` 是实际请求体；`response.json` 是实际响应体。JSON 使用两个空格缩进。记录不包含请求头、GEC token 或 `GEC_API_KEY`。`meta.json` 保留 API 的逻辑 size；响应同时提供合法 `width`、`height` 时也写入并用于预览，否则按 size 使用项目原三档画布。
+`api-url.txt` 是实际 endpoint；`request.json` 是实际请求体；`response.json` 是实际响应体。JSON 使用两个空格缩进。记录不包含请求头、GEC token 或 `GEC_API_KEY`，但有图时 `request.json` 会包含完整图片 Data URI。`meta.json` 保留 API 的逻辑 size；响应同时提供合法 `width`、`height` 时也写入并用于预览，否则按 size 使用项目原三档画布。
 
 `capture/` 保存确认时的 metadata、裁剪 source.html 和可选区域拼图，文件名与 capture.json 引用一致。HTTP 错误、业务 `status` 失败、非 JSON 响应或响应缺少产物字段时，目录包含三份调用记录和 capture，不包含三个 widget 产物，命令仍返回非零。非 JSON body 作为 JSON 字符串保存在 `response.json`；网络或响应流在取得 body 前失败时保存 `null`。捕获取消或发请求前失败不创建目录。
 
 目录时间使用执行 CLI 的本地时区，精确到秒；同名目录已经存在时命令失败，不覆盖旧结果。响应的 `warnings` 打印到 stderr。
 
-Edge Widgets CLI 根据响应的 `size`、`width`、`height` 生成 `meta.json`，但不自动改写 `extra.js` 或 `widget.html`。外部代码仍可能不满足本仓库的同步 IIFE、`widgetReady`、静态无动画或 `#widget-root` 约定；metadata 只让预览使用正确画布，不等于通过三文件质量检查。调用记录包含裁剪 HTML、页面数据和生成结果，是本机明文调试材料；`downloads/` 已被 Git 忽略，分享前仍需检查敏感内容。
+Edge Widgets CLI 根据响应的 `size`、`width`、`height` 生成 `meta.json`，但不自动改写 `extra.js` 或 `widget.html`。外部代码仍可能不满足本仓库的同步 IIFE、`widgetReady`、静态无动画或 `#widget-root` 约定；metadata 只让预览使用正确画布，不等于通过三文件质量检查。调用记录包含裁剪 HTML、页面数据、图片 base64 和生成结果，是本机明文调试材料；`downloads/` 已被 Git 忽略，分享前仍需检查敏感内容。
 
 ## 框选页面内容并生成 widget
 
